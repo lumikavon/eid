@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/__pycache__
+**/*.tsbuildinfo
+.venv
+.local
+.git
+.agents
+.claude
+_bmad
+_bmad-output
+test-results
+playwright-report
+.env
+**/.env

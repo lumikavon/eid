@@ -1,0 +1,14 @@
+{
+  "name": "eid-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.17.1",
+  "engines": { "node": "24.20.0", "pnpm": "10.17.1" },
+  "scripts": {
+    "build": "pnpm --filter edw-web build",
+    "lint": "pnpm --filter edw-web lint",
+    "test": "pnpm --filter edw-web test",
+    "test:ux": "playwright test tests/ux"
+  },
+  "devDependencies": { "@playwright/test": "1.55.0" }
+}

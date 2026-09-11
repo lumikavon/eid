@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": {"enum": ["live", "ready"]},
+    "checks": {
+      "type": "object",
+      "required": ["postgres", "redis", "rabbitmq", "s3", "keycloak", "worker"],
+      "properties": {
+        "postgres": {"const": "ready"},
+        "redis": {"const": "ready"},
+        "rabbitmq": {"const": "ready"},
+        "s3": {"const": "ready"},
+        "keycloak": {"const": "ready"},
+        "worker": {"const": "ready"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ready"}}},
+      "then": {"required": ["checks"]},
+      "else": {"not": {"required": ["checks"]}}
+    }
+  ],
+  "additionalProperties": false
+}

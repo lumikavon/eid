@@ -1,0 +1,136 @@
+name: eid-local
+x-runtime-environment: &runtime
+  EID_REDIS_URL: redis://redis:6379/0
+  EID_S3_ENDPOINT_URL: http://seaweedfs:8333
+  EID_S3_BUCKET: eid-local-artifacts
+  EID_OIDC_ISSUER: http://localhost:18080/realms/eid-local
+  EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
+  EID_WORKER_NODE_NAME: eid-worker@worker
+  EID_ENVIRONMENT_MARKER: eid-local-dev-v1
+  EID_REQUIRED_SCHEMA_REVISION: 0002_worker_metadata_only
+  EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
+services:
+  postgres:
+    labels: &ownership {io.eid.owner: "${EID_OWNER_NONCE:?Run the isolation bootstrap first}"}
+    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+    environment: {POSTGRES_DB: eid_local_dev, POSTGRES_USER: postgres, POSTGRES_PASSWORD: local-postgres-admin-only}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["eid-postgres:/var/lib/postgresql/data", "./postgres/001-isolated-database.sql:/docker-entrypoint-initdb.d/001-isolated-database.sql:ro"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres -d eid_local_dev"], interval: 3s, timeout: 3s, retries: 30}
+  keycloak:
+    labels: *ownership
+    image: quay.io/keycloak/keycloak:26.3.3@sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597
+    command: ["start-dev", "--import-realm", "--health-enabled=true"]
+    environment: {KC_BOOTSTRAP_ADMIN_USERNAME: eid-local-admin, KC_BOOTSTRAP_ADMIN_PASSWORD: local-keycloak-admin-only, KC_HOSTNAME: "http://localhost:18080"}
+    volumes: ["eid-keycloak:/opt/keycloak/data", "./keycloak/eid-local-realm.json:/opt/keycloak/data/import/eid-local-realm.json:ro"]
+    ports: ["127.0.0.1:58080:8080"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 15s
+  rabbitmq:
+    labels: *ownership
+    image: rabbitmq:4.2.6-management@sha256:f153635c99366bccfb869df82d466c1e4c1b0e432b0768984c4ee041c001f32c
+    environment: {RABBITMQ_DEFAULT_USER: eid_broker_admin, RABBITMQ_DEFAULT_PASS: local-rabbitmq-bootstrap-admin-only, RABBITMQ_DEFAULT_VHOST: eid-local}
+    ports: ["127.0.0.1:55672:5672", "127.0.0.1:55673:15672"]
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          rabbitmq-diagnostics -q check_running &&
+          rabbitmq-diagnostics -q check_virtual_hosts &&
+          rabbitmq-diagnostics -q check_port_listener 5672 &&
+          exec 3<>/dev/tcp/127.0.0.1/15672 &&
+          printf 'GET /api/whoami HTTP/1.0\r\nHost: localhost\r\nAuthorization: Basic %s\r\n\r\n'
+          "$(printf '%s' "$${RABBITMQ_DEFAULT_USER}:$${RABBITMQ_DEFAULT_PASS}" | base64 -w 0)" >&3 &&
+          grep -q '200 OK' <&3
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+  redis:
+    labels: *ownership
+    image: redis:8.2.1-alpine3.22@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:56379:6379"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 3s, timeout: 3s, retries: 30}
+  seaweedfs:
+    labels: *ownership
+    image: chrislusf/seaweedfs:4.46@sha256:6a602956ac4915057199a5271343e9c86c403a561db7c21033362f6791aa29c9
+    command: ["server", "-dir=/data", "-s3", "-s3.config=/etc/eid/s3.json"]
+    ports: ["127.0.0.1:58333:8333"]
+    volumes: ["eid-seaweedfs:/data", "./seaweedfs/s3.json:/etc/eid/s3.json:ro"]
+  api:
+    labels: *ownership
+    image: eid-local-api:0.1.0
+    build:
+      context: ..
+      dockerfile: deployment/python.Dockerfile
+      args: {EID_SOURCE_FINGERPRINT: "${EID_API_SOURCE_FINGERPRINT:?Capture source fingerprints before build}"}
+    command: ["uvicorn", "edw_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      <<: *runtime
+      EID_DATABASE_URL: postgresql://eid_api:local-api-only@postgres:5432/eid_local_dev
+      EID_RABBITMQ_URL: amqp://eid_api:local-api-broker-only@rabbitmq:5672/eid-local
+      EID_S3_ACCESS_KEY: eid-s3-api
+      EID_S3_SECRET_KEY: local-s3-api-read-only
+      EID_KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      EID_KEYCLOAK_MONITOR_CLIENT_ID: eid-readiness-monitor
+      EID_KEYCLOAK_MONITOR_CLIENT_SECRET: local-keycloak-readiness-monitor-only
+    depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_healthy}, redis: {condition: service_healthy}, seaweedfs: {condition: service_started}, keycloak: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+  worker:
+    labels: *ownership
+    image: eid-local-worker:0.1.0
+    build:
+      context: ..
+      dockerfile: deployment/python.Dockerfile
+      args: {EID_SOURCE_FINGERPRINT: "${EID_WORKER_SOURCE_FINGERPRINT:?Capture source fingerprints before build}"}
+    command: ["python", "-m", "edw_worker", "worker", "--loglevel=INFO", "--queues=generation,retrieval,review,integration", "--concurrency=1"]
+    environment:
+      <<: *runtime
+      EID_DATABASE_URL: postgresql://eid_worker:local-worker-only@postgres:5432/eid_local_dev
+      EID_RABBITMQ_URL: amqp://eid_worker:local-worker-only@rabbitmq:5672/eid-local
+      EID_S3_ACCESS_KEY: eid-s3-worker
+      EID_S3_SECRET_KEY: local-s3-worker-read-only
+    depends_on: {api: {condition: service_started}}
+    healthcheck:
+      test: ["CMD", "python", "-m", "edw_worker.health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+  web:
+    labels: *ownership
+    image: eid-local-web:0.1.0
+    build:
+      context: ..
+      dockerfile: deployment/web.Dockerfile
+      args: {EID_SOURCE_FINGERPRINT: "${EID_WEB_SOURCE_FINGERPRINT:?Capture source fingerprints before build}"}
+    depends_on: {api: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4173/"], interval: 3s, timeout: 3s, retries: 30}
+  nginx:
+    labels: *ownership
+    image: nginx:1.29.1-alpine3.22@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+    ports: ["127.0.0.1:18080:8080"]
+    volumes: ["./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro"]
+    depends_on: {web: {condition: service_healthy}, api: {condition: service_healthy}, keycloak: {condition: service_healthy}}
+volumes:
+  eid-keycloak:
+    name: eid-local-keycloak
+    labels: *ownership
+  eid-postgres:
+    name: eid-local-postgres
+    labels: *ownership
+  eid-seaweedfs:
+    name: eid-local-seaweedfs
+    labels: *ownership

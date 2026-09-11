@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "services": {
+    "api": {
+      "container_id": "837d8b7662d6",
+      "image_id": "sha256:5b28784996aa3f9f03d1447bd7c9718966a4bdbdbce3e4629499bebab2a6de75",
+      "image_ref": "eid-local-api:0.1.0",
+      "source_fingerprint": "sha256:c32a85ba0ddcc11d8055a38b43466905370d3fb082ac1dd76d5d1ed05795f255"
+    },
+    "keycloak": {
+      "container_id": "3f91ec98b087",
+      "image_id": "sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597",
+      "image_ref": "quay.io/keycloak/keycloak:26.3.3@sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597"
+    },
+    "nginx": {
+      "container_id": "4eeb128c140c",
+      "image_id": "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+      "image_ref": "nginx:1.29.1-alpine3.22@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+    },
+    "postgres": {
+      "container_id": "88bf143fd420",
+      "image_id": "sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3",
+      "image_ref": "postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
+    },
+    "rabbitmq": {
+      "container_id": "d22ddbd66728",
+      "image_id": "sha256:f153635c99366bccfb869df82d466c1e4c1b0e432b0768984c4ee041c001f32c",
+      "image_ref": "rabbitmq:4.2.6-management@sha256:f153635c99366bccfb869df82d466c1e4c1b0e432b0768984c4ee041c001f32c"
+    },
+    "redis": {
+      "container_id": "602a970b97c4",
+      "image_id": "sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
+      "image_ref": "redis:8.2.1-alpine3.22@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232"
+    },
+    "seaweedfs": {
+      "container_id": "5a2a5b54ba2b",
+      "image_id": "sha256:6a602956ac4915057199a5271343e9c86c403a561db7c21033362f6791aa29c9",
+      "image_ref": "chrislusf/seaweedfs:4.46@sha256:6a602956ac4915057199a5271343e9c86c403a561db7c21033362f6791aa29c9"
+    },
+    "web": {
+      "container_id": "d708731ef83c",
+      "image_id": "sha256:5bb5ae35433c7f580cbe7f7e0a6ada4332e04397d389c9fa1b2abcf639621e3d",
+      "image_ref": "eid-local-web:0.1.0",
+      "source_fingerprint": "sha256:be0c88b2fda066cd6c213c2c63ceca37da8644547e52d648cd3db6ba9d246f21"
+    },
+    "worker": {
+      "container_id": "904e52d10a1b",
+      "image_id": "sha256:ff0fd5d6bad0734ad45f7232192aa8018ffc37066ce0b624d1a7da09df0d411a",
+      "image_ref": "eid-local-worker:0.1.0",
+      "source_fingerprint": "sha256:c32a85ba0ddcc11d8055a38b43466905370d3fb082ac1dd76d5d1ed05795f255"
+    }
+  },
+  "source_fingerprint_algorithm": "sha256"
+}

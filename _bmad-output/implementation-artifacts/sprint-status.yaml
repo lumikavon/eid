@@ -1,0 +1,206 @@
+# Sprint Status - S4b author draft only
+# Generated from the explicit immutable IDs in the source index and 13 epic shards.
+# Source planning root: D:/Desktop/eid/_bmad-output/planning-artifacts
+# Source index: D:/Desktop/eid/_bmad-output/planning-artifacts/epics.md
+# Main project is read-only for this task; this file is a worktree draft.
+# The coordinator handles independent artifact review and main-project persistence.
+# Upstream S4_CONTENT_GATE and S4_ARTIFACT_GATE PASS are supplied handoff facts.
+# Historical author/pending text in source files is retained unchanged.
+# No S4b independent PASS or S4c user confirmation is asserted by this file.
+# No S5/S6, implementation, database action, paid API, Git or external publication.
+# No prior sprint-status.yaml was found in the main project or this worktree.
+# No status was downgraded, upgraded from a story file, or inferred from planned.
+# Manual construction follows the skill template; deterministic scripts were not run.
+# Story order is numeric Epic 1 through 13, then each shard's original story order.
+# Stable explicit IDs override title-derived slugs; existing source titles are unchanged.
+# story_location is project-root-relative so coordinator persistence stays portable.
+# Quality: medium, as defined in D:/Desktop/eid/AGENTS.md.
+# Scope: all three phases, one repository, edw-web / edw-api / edw-worker only.
+# Knowledge/LLM Gateways remain shared modules; queue and security isolation remain.
+# Prototype and UX requirements remain binding; this stage makes no UI changes.
+#
+# ACCEPTANCE LEDGER BOUNDARY:
+# Epics 1-12 contain 67 L-delivery stories; Epic 13 contains 6 R/P acceptance stories.
+# Nothing is implemented or accepted merely because it is listed here.
+# Future done on an Epic 1-12 story means its actual L delivery only.
+# Every retained R/P source clause stays separately uncompleted under Epic 13.
+# 9-5, 12-3, 12-4, 12-5 and 12-6 retain their stable legacy slugs, not real-pass claims.
+# Actual L implementation and positive AND negative tests cannot be deferred as ENV gaps.
+# After all local work, 12-6 closes L and registers every uncompleted real obligation.
+# Then 13-1 -> 13-2 -> 13-3 -> 13-4 -> 13-5 -> 13-6 is the proposed acceptance order.
+# Missing real model/enterprise/official-asset/UAT/production-equivalent evidence is
+# blocked/not-run in its evidence ledger, never done; backlog remains the initial
+# supported tracking state here. Local doubles do not prove real efficacy/integration.
+# Failed or blocked stories cannot be skipped or marked done. No later local epic
+# follows Epic 13. No full-delivery completion or execution authorization is implied.
+# The source epics.md completion contract and per-story transfer tables are normative.
+#
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+# Project-specific serial ordering and unconfirmed S4c above constrain these generic notes.
+# Timestamps use MM-DD-YYYY HH:MM.
+
+generated: "09-09-2026 04:44"
+last_updated: "09-11-2026 00:52"
+project: eid
+project_key: NOKEY
+tracking_system: file-system
+story_location: "_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: 6 L-delivery stories; source epic-1-secure-workspace.md
+  epic-1: in-progress
+  1-1-runnable-workspace: done
+  1-2-current-access: backlog
+  1-3-workspace-discovery: backlog
+  1-4-durable-submission: backlog
+  1-5-fenced-recovery: backlog
+  1-6-task-observation: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: 6 L-delivery stories; source epic-2-controlled-authoring.md
+  epic-2: backlog
+  2-1-template-creation: backlog
+  2-2-domain-editor: backlog
+  2-3-version-conflicts: backlog
+  2-4-template-governance: backlog
+  2-5-project-context: backlog
+  2-6-outline-confirmation: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: 5 L-delivery stories; source epic-3-trustworthy-evidence.md
+  epic-3: backlog
+  3-1-safe-attachments: backlog
+  3-2-authorized-retrieval: backlog
+  3-3-source-governance: backlog
+  3-4-section-evidence: backlog
+  3-5-claim-citation: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md
+  epic-4: backlog
+  4-1-safe-model-routing: backlog
+  4-2-section-generation: backlog
+  4-3-copilot-operations: backlog
+  4-4-reviewed-patches: backlog
+  4-5-pending-safe-graphics: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: 7 L-delivery stories; source epic-5-review-core-types.md
+  epic-5: backlog
+  5-1-pinned-reviewers: backlog
+  5-2-review-inspection: backlog
+  5-3-issue-disposition: backlog
+  5-4-technical-solution: backlog
+  5-5-prd-composition: backlog
+  5-6-test-traceability: backlog
+  5-7-measurable-requirements: backlog
+  epic-5-retrospective: optional
+
+  # Epic 6: 6 L-delivery stories; source epic-6-formal-delivery.md
+  epic-6: backlog
+  6-1-human-approval: backlog
+  6-2-atomic-publication: backlog
+  6-3-docx-pdf-rendering: backlog
+  6-4-html-markdown-export: backlog
+  6-5-controlled-artifacts: backlog
+  6-6-trusted-knowledge-return: backlog
+  epic-6-retrospective: optional
+
+  # Epic 7: 5 L-delivery stories; source epic-7-observable-core.md
+  epic-7: backlog
+  7-1-audit-observability: backlog
+  7-2-safe-governance: backlog
+  7-3-core-degradation: backlog
+  7-4-core-integration: backlog
+  7-5-ux-regression: backlog
+  epic-7-retrospective: optional
+
+  # Epic 8: 5 L-delivery stories; source epic-8-project-document-types.md
+  epic-8: backlog
+  8-1-quality-outline: backlog
+  8-2-project-plan: backlog
+  8-3-functional-test-outline: backlog
+  8-4-performance-test-outline: backlog
+  8-5-project-summary: backlog
+  epic-8-retrospective: optional
+
+  # Epic 9: 5 L-delivery stories; source epic-9-quality-evaluation.md
+  epic-9: backlog
+  9-1-quality-analytics: backlog
+  9-2-review-rule-center: backlog
+  9-3-golden-datasets: backlog
+  9-4-evaluation-runs: backlog
+  9-5-real-quality-acceptance: backlog
+  epic-9-retrospective: optional
+
+  # Epic 10: 5 L-delivery stories; source epic-10-tender-compliance.md
+  epic-10: backlog
+  10-1-tender-intake: backlog
+  10-2-tender-risk-rules: backlog
+  10-3-compliance-matrix: backlog
+  10-4-bid-review-release: backlog
+  10-5-tender-integration: backlog
+  epic-10-retrospective: optional
+
+  # Epic 11: 6 L-delivery stories; source epic-11-production-forms.md
+  epic-11: backlog
+  11-1-form-schema: backlog
+  11-2-schema-patches: backlog
+  11-3-form-instances: backlog
+  11-4-form-multiformat: backlog
+  11-5-form-scan-proposals: backlog
+  11-6-form-integration: backlog
+  epic-11-retrospective: optional
+
+  # Epic 12: 6 L-delivery stories; source epic-12-integration-readiness.md
+  epic-12: backlog
+  12-1-declared-connectors: backlog
+  12-2-effect-reconciliation: backlog
+  12-3-real-joint-integration: backlog
+  12-4-performance-capacity: backlog
+  12-5-safe-rollout-recovery: backlog
+  12-6-full-acceptance-ledger: backlog
+  epic-12-retrospective: optional
+
+  # Epic 13: 6 R/P-primary acceptance stories; source epic-13-real-acceptance.md
+  # Real acceptance stays separate from all earlier L done semantics.
+  epic-13: backlog
+  13-1-real-quality-poc: backlog
+  13-2-real-enterprise-integration: backlog
+  13-3-real-output-ux-uat: backlog
+  13-4-real-performance-capacity: backlog
+  13-5-real-security-recovery: backlog
+  13-6-full-real-acceptance: backlog
+  epic-13-retrospective: optional
+
+# No retrospective has been performed and no action item has been invented.
+action_items: []

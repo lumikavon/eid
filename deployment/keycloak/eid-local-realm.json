@@ -1,0 +1,38 @@
+{
+  "realm": "eid-local",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [{
+    "clientId": "eid-web",
+    "name": "EID local SPA",
+    "enabled": true,
+    "publicClient": true,
+    "standardFlowEnabled": true,
+    "implicitFlowEnabled": false,
+    "directAccessGrantsEnabled": false,
+    "redirectUris": ["http://localhost:18080/auth/callback"],
+    "webOrigins": ["http://localhost:18080"],
+    "attributes": {
+      "pkce.code.challenge.method": "S256",
+      "post.logout.redirect.uris": "http://localhost:18080/"
+    },
+    "protocolMappers": [{
+      "name": "audience-eid-web",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "consentRequired": false,
+      "config": {"included.client.audience": "eid-web", "access.token.claim": "true"}
+    }]
+  }],
+  "users": [{
+    "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "username": "local-member",
+    "email": "local-member@example.invalid",
+    "enabled": true,
+    "emailVerified": true,
+    "firstName": "本地",
+    "lastName": "项目成员",
+    "credentials": [{"type": "password", "value": "eid-local-member", "temporary": false}]
+  }]
+}

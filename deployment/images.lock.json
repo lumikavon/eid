@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "validated_platform": "linux/amd64",
+  "base_images": {
+    "python": "python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254",
+    "node": "node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e",
+    "postgres": "postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3",
+    "keycloak": "quay.io/keycloak/keycloak:26.3.3@sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597",
+    "rabbitmq": "rabbitmq:4.2.6-management@sha256:f153635c99366bccfb869df82d466c1e4c1b0e432b0768984c4ee041c001f32c",
+    "redis": "redis:8.2.1-alpine3.22@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
+    "seaweedfs": "chrislusf/seaweedfs:4.46@sha256:6a602956ac4915057199a5271343e9c86c403a561db7c21033362f6791aa29c9",
+    "nginx": "nginx:1.29.1-alpine3.22@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+  },
+  "build_images": {
+    "api": "eid-local-api:0.1.0",
+    "worker": "eid-local-worker:0.1.0",
+    "web": "eid-local-web:0.1.0"
+  }
+}

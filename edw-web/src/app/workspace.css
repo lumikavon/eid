@@ -1,0 +1,7 @@
+#root{height:100%}
+.workspace > .hero,.workspace > .notice{margin:24px}
+.notice{border:1px solid var(--line2);border-radius:13px;padding:18px}
+.notice .error{color:#c73942}
+.progress.unknown i{width:0}
+/* Keep the prototype copy's intrinsic flex width while live account labels replace its text. */
+.project-card-copy{min-width:114.46875px;min-height:80px;display:flex;flex-direction:column;justify-content:center}

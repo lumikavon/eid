@@ -1,0 +1,119 @@
+{
+  "method": "Exact decoded RGB difference for independent review; values are observations, not acceptance tolerances.",
+  "metrics": [
+    {
+      "viewport": "1024x768",
+      "image_size": [
+        1297,
+        768
+      ],
+      "different_pixels": 307209,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        12,
+        0,
+        1294,
+        756
+      ]
+    },
+    {
+      "viewport": "1180x800",
+      "image_size": [
+        1297,
+        800
+      ],
+      "different_pixels": 303974,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        25,
+        0,
+        1294,
+        788
+      ]
+    },
+    {
+      "viewport": "1181x800",
+      "image_size": [
+        1297,
+        800
+      ],
+      "different_pixels": 304262,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        25,
+        0,
+        1294,
+        788
+      ]
+    },
+    {
+      "viewport": "1440x900",
+      "image_size": [
+        1440,
+        900
+      ],
+      "different_pixels": 360301,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        24,
+        0,
+        1428,
+        888
+      ]
+    },
+    {
+      "viewport": "1920x1080",
+      "image_size": [
+        1920,
+        1080
+      ],
+      "different_pixels": 471424,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        25,
+        91,
+        1893,
+        1038
+      ]
+    },
+    {
+      "viewport": "768x1024",
+      "image_size": [
+        1297,
+        1024
+      ],
+      "different_pixels": 336749,
+      "max_rgb_delta": [
+        245,
+        215,
+        255
+      ],
+      "difference_bbox": [
+        25,
+        0,
+        1294,
+        1012
+      ]
+    }
+  ]
+}
