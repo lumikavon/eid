@@ -69,7 +69,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-11-2026 00:52"
+last_updated: "09-14-2026 06:19"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -79,7 +79,7 @@ development_status:
   # Epic 1: 6 L-delivery stories; source epic-1-secure-workspace.md
   epic-1: in-progress
   1-1-runnable-workspace: done
-  1-2-current-access: backlog
+  1-2-current-access: done
   1-3-workspace-discovery: backlog
   1-4-durable-submission: backlog
   1-5-fenced-recovery: backlog

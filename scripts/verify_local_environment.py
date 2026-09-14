@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 import boto3
@@ -415,8 +416,7 @@ def current_runtime_images(expected_source_fingerprints=None):
             expected_source_fingerprints == current_source_fingerprints,
             "源文件与构建前指纹不匹配；拒绝记录运行镜像",
         )
-    records = {}
-    for service, image_ref in build_images().items():
+    def inspect_application(service, image_ref):
         try:
             image = json.loads(command("docker", "image", "inspect", image_ref))[0]
         except (json.JSONDecodeError, IndexError, TypeError) as exc:
@@ -436,26 +436,38 @@ def current_runtime_images(expected_source_fingerprints=None):
                 f"{service} 构建镜像未绑定构建前源指纹",
             )
         container_id = _runtime_container_id(service, image_id, expected_owner=owner)
-        records[service] = {
+        return {
             "image_ref": image_ref,
             "image_id": image_id,
             "container_id": container_id,
             "source_fingerprint": image_fingerprint,
         }
-    for service, image_ref in infrastructure_images().items():
+    def inspect_infrastructure(service, image_ref):
         image = json.loads(command("docker", "image", "inspect", image_ref))[0]
         image_id = image.get("Id")
         require(isinstance(image_id, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", image_id), f"{service} 基础镜像 ID 无效")
-        records[service] = {
+        return {
             "image_ref": image_ref,
             "image_id": image_id,
             "container_id": _runtime_container_id(service, image_id, require_health=False, expected_owner=owner),
         }
-    for service, record in records.items():
+    def recheck_container(service, record):
         require(
             _runtime_container_id(service, record["image_id"], require_health=service in current_source_fingerprints, expected_owner=owner) == record["container_id"],
             f"{service} 容器在运行镜像核验期间已替换",
         )
+    # Each read retains its own ownership, health and image checks. Finish the
+    # complete first pass before the replacement-detection pass begins.
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        initial = {service: executor.submit(inspect_application, service, image_ref)
+                   for service, image_ref in build_images().items()}
+        initial.update({service: executor.submit(inspect_infrastructure, service, image_ref)
+                        for service, image_ref in infrastructure_images().items()})
+        records = {service: future.result() for service, future in initial.items()}
+        final_checks = [executor.submit(recheck_container, service, record)
+                        for service, record in records.items()]
+        for future in final_checks:
+            future.result()
     require(
         source_fingerprints() == current_source_fingerprints,
         "运行镜像核验期间源文件已变化；请重新运行 bootstrap",
@@ -510,9 +522,17 @@ def ownership(create=False):
     verify_engine()
     existing_volumes = set(command("docker", "volume", "ls", "--format", "{{.Name}}").splitlines())
     all_container_ids = command("docker", "ps", "-aq").splitlines()
-    all_containers = {
-        cid: json.loads(command("docker", "inspect", cid))[0] for cid in all_container_ids
-    }
+    all_containers = {}
+    # Keep the full host inventory, including stopped/foreign volume attachments.
+    # Batch CLI calls only; every returned identity and all existing guards still apply.
+    for offset in range(0, len(all_container_ids), 100):
+        batch = all_container_ids[offset:offset+100]
+        rows = json.loads(command("docker", "inspect", *batch))
+        require(isinstance(rows, list) and len(rows)==len(batch), "容器检查清单不完整")
+        for cid, metadata in zip(batch, rows, strict=True):
+            require(isinstance(metadata, dict) and isinstance(metadata.get("Id"), str)
+                    and metadata["Id"].startswith(cid), "容器检查身份不匹配")
+            all_containers[cid] = metadata
     existing_containers = {
         cid: metadata
         for cid, metadata in all_containers.items()

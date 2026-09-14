@@ -5,3 +5,21 @@
 .progress.unknown i{width:0}
 /* Keep the prototype copy's intrinsic flex width while live account labels replace its text. */
 .project-card-copy{min-width:114.46875px;min-height:80px;display:flex;flex-direction:column;justify-content:center}
+.access-panel{margin:24px;border:1px solid var(--line2);border-radius:13px;padding:18px}
+.access-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.access-panel input,.access-panel select,.access-panel textarea{font:inherit;color:inherit;border:1px solid var(--line);border-radius:8px;padding:8px}
+.access-muted{color:var(--muted)}
+.access-admin{display:grid;grid-template-columns:260px minmax(480px,1fr);gap:12px;padding:18px 0}
+.access-admin aside{background:var(--panel2);padding:18px;border-radius:12px}
+.access-admin table{width:100%;border-collapse:collapse;font-size:13px}
+.access-admin th,.access-admin td{text-align:left;padding:10px;border-bottom:1px solid var(--line2)}
+.access-editor{display:grid;gap:12px;margin-top:18px}
+.access-editor>label{display:grid;gap:6px}
+.access-editor>.access-toggle{display:flex;align-items:center;gap:6px}
+.access-editor fieldset{border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px}
+.access-actions{display:flex;justify-content:flex-end;gap:8px}
+.access-panel .btn:disabled{color:#475569;background:#e2e8f0;border-color:#94a3b8;cursor:not-allowed;box-shadow:none}
+.access-page-state{margin-right:auto;align-self:center;color:#475569;font-size:12px}
+.access-scope-row{display:flex;align-items:center;gap:8px;width:100%}
+.access-scope-row label{display:flex;align-items:center;gap:8px;flex:1}
+.access-scope-row textarea{flex:1;min-width:0;resize:vertical}

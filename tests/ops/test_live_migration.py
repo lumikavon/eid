@@ -11,8 +11,10 @@ from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
+from psycopg.rows import dict_row
 
 from scripts.verify_local_environment import verify_migration_target
+from edw_api.access.repository import first_workspace
 
 
 pytestmark = pytest.mark.skipif(
@@ -27,6 +29,8 @@ REQUIRED_TABLES = {
     "identity_account",
     "workspace",
     "workspace_membership",
+    "access_workspace", "access_member", "access_resource", "access_audit",
+    "access_invalidation", "access_delegation", "access_current_facts",
 }
 
 
@@ -55,7 +59,8 @@ def _public_state(connection):
     return tables, tracked, versions
 
 
-def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back():
+@pytest.mark.parametrize("legacy_members", [False, True])
+def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy_members):
     verify_migration_target(GUARDED_URL)
     schema = f"eid_migration_test_{uuid.uuid4().hex}"
     engine = sa.create_engine(GUARDED_URL, poolclass=NullPool, connect_args={"connect_timeout": 3})
@@ -73,18 +78,36 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back():
             config.set_main_option("script_location", str(ROOT / "migrations"))
             scripts = ScriptDirectory.from_config(config)
 
-            def migrations_from(current_heads, _context):
-                return scripts._upgrade_revs("head", current_heads)
+            def upgrade(target):
+                migration_context = MigrationContext.configure(
+                    connection, opts={"fn": lambda heads, _: scripts._upgrade_revs(target, heads)}
+                )
+                with Operations.context(migration_context):
+                    migration_context.run_migrations()
 
-            migration_context = MigrationContext.configure(
-                connection, opts={"fn": migrations_from}
-            )
-            with Operations.context(migration_context):
-                migration_context.run_migrations()
+            legacy = []
+            if legacy_members:
+                upgrade("0002_worker_metadata_only")
+                for index in range(3):
+                    identity, workspace = uuid.uuid4(), uuid.uuid4()
+                    subject = f"legacy-{identity}"
+                    connection.execute(sa.text(
+                        "INSERT INTO identity_account(id,subject,display_name,department) "
+                        "VALUES (:id,:subject,'Legacy member','产品部')"
+                    ), {"id": identity, "subject": subject})
+                    connection.execute(sa.text(
+                        "INSERT INTO workspace(id,slug,name) VALUES (:id,:slug,'Legacy project')"
+                    ), {"id": workspace, "slug": f"legacy-{index}"})
+                    connection.execute(sa.text(
+                        "INSERT INTO workspace_membership(identity_id,workspace_id,active) "
+                        "VALUES (:identity,:workspace,:active)"
+                    ), {"identity": identity, "workspace": workspace, "active": index != 2})
+                    legacy.append((subject, workspace, index != 2))
+            upgrade("head")
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0002_worker_metadata_only"
+            ).scalar_one() == "0006_api_write_only"
             assert set(
                 connection.execute(
                     sa.text(
@@ -98,8 +121,32 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back():
                 "SELECT i.subject, w.slug, m.active "
                 "FROM identity_account AS i "
                 "JOIN workspace_membership AS m ON m.identity_id = i.id "
-                "JOIN workspace AS w ON w.id = m.workspace_id"
+                "JOIN workspace AS w ON w.id = m.workspace_id "
+                "WHERE i.subject='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'"
             ).one() == ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "eid-local", True)
+
+            assert connection.exec_driver_sql(
+                "SELECT count(*) FROM workspace w LEFT JOIN access_workspace p "
+                "ON p.workspace_id=w.id WHERE p.workspace_id IS NULL"
+            ).scalar_one() == 0
+            assert connection.exec_driver_sql(
+                "SELECT count(*) FROM workspace_membership m LEFT JOIN access_member p "
+                "USING (identity_id,workspace_id) WHERE p.identity_id IS NULL"
+            ).scalar_one() == 0
+            raw = connection.connection.driver_connection
+            previous_factory = raw.row_factory
+            try:
+                raw.row_factory = dict_row
+                for subject, workspace, active in legacy:
+                    current = first_workspace(raw, subject)
+                    if active:
+                        assert current["workspace_id"] == str(workspace)
+                        assert current["roles"] == ["author"]
+                        assert current["clearance"] == 1
+                    else:
+                        assert current is None
+            finally:
+                raw.row_factory = previous_factory
 
             for role in ("eid_api", "eid_worker"):
                 for table in REQUIRED_TABLES:
@@ -108,7 +155,9 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back():
                         sa.text("SELECT has_table_privilege(:role, :table, 'SELECT')"),
                         {"role": role, "table": qualified_table},
                     ).scalar_one()
-                    assert allowed is (role == "eid_api" or table == "alembic_version")
+                    expected = table == "alembic_version" or (role == "eid_api" and table not in {
+                        "access_audit", "access_invalidation", "access_delegation"})
+                    assert allowed is expected
 
             assert _public_state(connection) == public_before
         finally:

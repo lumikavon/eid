@@ -245,8 +245,9 @@ test('an account 403 preserves the valid session and shows a durable workspace d
     window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>nativeSetInterval(handler,timeout===15000?100:timeout,...args);
   });
   let requestCount=0;
-  await page.route('**/api/v1/me',route=>{
+  await page.route('**/api/v1/me',async route=>{
     requestCount+=1;
+    await new Promise(resolve=>setTimeout(resolve,250));
     return route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({error:{message:'workspace rejected'}})});
   });
   await page.goto('/');
@@ -456,6 +457,7 @@ test('post-flow runtime log gate covers every owned Compose service',async()=>{
   expect(Object.keys(report.services).sort()).toEqual([...services].sort());
   expect(Object.keys(report.scanned_container_ids).sort()).toEqual([...services].sort());
   expect(report.credential_inventory).toEqual([
+    'access_fixture_password',
     'browser_password','keycloak_admin_password','keycloak_monitor_client_secret','postgres_admin_password','postgres_api_password',
     'postgres_migrator_password','postgres_worker_password','rabbitmq_api_password',
     'rabbitmq_bootstrap_admin_password','rabbitmq_worker_password','s3_api_secret_key',

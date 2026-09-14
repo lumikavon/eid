@@ -1,7 +1,7 @@
 import { token } from '../auth/oidc';
 import { boundedJson } from '../http/bounded-json';
 export type Account={actor_id:string;subject:string;display_name:string;department:string;workspace_id:string;workspace_slug:string;workspace_name:string};
-export type AccountRequestErrorKind='authentication'|'forbidden'|'transient'|'invalid-response';
+export type AccountRequestErrorKind='authentication'|'forbidden'|'transient'|'invalid-response'|'validation';
 export class AccountRequestError extends Error{
   constructor(message:string,readonly kind:AccountRequestErrorKind,readonly status?:number){super(message);this.name='AccountRequestError'}
 }

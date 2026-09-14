@@ -2,6 +2,9 @@
 
 import json
 import subprocess
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -58,31 +61,20 @@ def _runtime_fixture(
         if args[1:3] == ["ps", "-aq"]:
             return "\n".join(container_ids.values())
         if args[1] == "inspect":
-            container_id = args[2]
-            service = next(
-                name for name, candidate in container_ids.items() if candidate == container_id
-            )
-            owner = "foreign-nonce" if service == foreign else "owned-nonce"
-            return json.dumps(
-                [
-                    {
-                        "Config": {
-                            "Labels": {
-                                "com.docker.compose.project": "eid-local",
-                                "com.docker.compose.service": service,
-                                "io.eid.owner": owner,
-                            }
-                        },
-                        "State": {"Running": True},
-                    }
-                ]
-            )
+            inspections = []
+            for container_id in args[2:]:
+                service = next(name for name, candidate in container_ids.items() if candidate==container_id)
+                inspections.append({"Id": container_id, "Config": {"Labels": {
+                    "com.docker.compose.project": "eid-local", "com.docker.compose.service": service,
+                    "io.eid.owner": "foreign-nonce" if service==foreign else "owned-nonce",
+                }}, "State": {"Running": True}})
+            return json.dumps(inspections)
         raise AssertionError(args)
 
     def run(args, **kwargs):
         del kwargs
         service = next(
-            name for name, candidate in container_ids.items() if candidate == args[2]
+            name for name, candidate in container_ids.items() if candidate == args[-1]
         )
         value = (logs or {}).get(service, "ordinary service output")
         if service == verify_runtime_logs.EXPECTED_SERVICES[-1] and replace_after_logs:
@@ -98,6 +90,7 @@ def _runtime_fixture(
 
 def test_scan_matches_every_pattern_class_and_complete_credential_inventory(monkeypatch):
     assert verify_runtime_logs.LOCAL_CREDENTIALS == {
+        "access_fixture_password": "eid-local-access",
         "browser_password": "eid-local-member",
         "postgres_admin_password": "local-postgres-admin-only",
         "keycloak_admin_password": "local-keycloak-admin-only",
@@ -173,6 +166,25 @@ def test_scan_clean_owned_nine_service_runtime_passes(monkeypatch):
     )
 
 
+def test_every_service_scans_full_history_through_one_declared_utc_cutoff(monkeypatch):
+    _runtime_fixture(monkeypatch)
+    cutoff = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    now = Mock(return_value=cutoff)
+    monkeypatch.setattr(verify_runtime_logs, "datetime", SimpleNamespace(now=now))
+    original = verify_runtime_logs.subprocess.run
+    commands = []
+    def run(args, **kwargs):
+        commands.append(args)
+        return original(args, **kwargs)
+    monkeypatch.setattr(verify_runtime_logs.subprocess, "run", run)
+    report = verify_runtime_logs.scan_runtime_logs()
+    assert len(commands) == 9
+    assert now.call_count == 1
+    assert report["log_cutoff_utc"] == cutoff.isoformat()
+    assert all(args[1:4] == ["logs", "--until", report["log_cutoff_utc"]] for args in commands)
+    assert all("--since" not in args and "--tail" not in args for args in commands)
+
+
 def test_scan_rejects_missing_expected_service(monkeypatch):
     _runtime_fixture(monkeypatch, missing="nginx")
 
@@ -212,4 +224,23 @@ def test_scan_rejects_source_binding_changed_after_logs_are_read(monkeypatch):
     _runtime_fixture(monkeypatch, source_change_after_logs=True)
 
     with pytest.raises(RuntimeError, match="source binding changed"):
+        verify_runtime_logs.scan_runtime_logs()
+
+
+@pytest.mark.parametrize("change", ["missing", "identity"])
+def test_batch_inspection_requires_every_requested_container_identity(monkeypatch, change):
+    _runtime_fixture(monkeypatch)
+    original = verify_runtime_logs.subprocess.check_output
+    def changed(args, **kwargs):
+        output = original(args, **kwargs)
+        if args[1]=="inspect":
+            rows = json.loads(output)
+            if change=="missing":
+                rows.pop()
+            else:
+                rows[0]["Id"] = "unrelated-container"
+            return json.dumps(rows)
+        return output
+    monkeypatch.setattr(verify_runtime_logs.subprocess, "check_output", changed)
+    with pytest.raises(RuntimeError, match="Runtime log"):
         verify_runtime_logs.scan_runtime_logs()

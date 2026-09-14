@@ -76,6 +76,14 @@ def test_current_account_rejects_unmapped_and_inactive_database_identities(monke
                 workspace_id,
             ),
         )
+        conn.execute("""INSERT INTO access_workspace(workspace_id,tenant_id,project_id,customer_id,
+                     product_id,department,classification) VALUES (%s,%s,'test','test','test','测试部',1)""",
+                     (workspace_id, workspace_id))
+        conn.execute("""INSERT INTO access_member(identity_id,workspace_id,roles,project_scope,
+                     customer_scope,product_scope,department_scope,owner_scope,approval_states,clearance)
+                     SELECT identity_id,workspace_id,ARRAY['author'],ARRAY['test'],ARRAY['test'],
+                     ARRAY['test'],ARRAY['测试部'],'self',ARRAY['draft'],1 FROM workspace_membership
+                     WHERE workspace_id=%s""", (workspace_id,))
         monkeypatch.setattr(db, "connection", rollback_connection)
         settings = Settings(database_url=DATABASE_URL)
 
@@ -83,11 +91,11 @@ def test_current_account_rejects_unmapped_and_inactive_database_identities(monke
         assert db.current_account(settings, f"inactive-identity-{suffix}") is None
         assert db.current_account(settings, f"inactive-membership-{suffix}") is None
         assert db.current_account(settings, f"active-membership-{suffix}") == {
-            "actor_id": active_membership_id,
+            "actor_id": str(active_membership_id),
             "subject": f"active-membership-{suffix}",
             "display_name": "活动成员关系",
             "department": "测试部",
-            "workspace_id": workspace_id,
+            "workspace_id": str(workspace_id),
             "workspace_slug": f"live-{suffix}",
             "workspace_name": "回滚查询测试工作区",
         }

@@ -22,8 +22,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import OidcVerifier, bearer_token
 from .config import get_settings
-from .db import CURRENT_ACCOUNT_SQL, current_account
+from .db import current_account
+from .access.repository import CURRENT_WORKSPACE_SQL, workspace_discovery_params
 from .errors import ApiError
+from .access.routes import create_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
     WEB_CLIENT_ID,
@@ -36,6 +38,7 @@ from .keycloak_contract import (
 settings = get_settings()
 verifier = OidcVerifier(settings)
 app = FastAPI(title="EID API", version="0.1.0")
+app.include_router(create_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
 
 TRACEPARENT_RE = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})")
@@ -185,16 +188,23 @@ def _postgres_status() -> str:
             ).fetchall()
             required_access = conn.execute(
                 """
-                WITH required(name) AS (
-                    VALUES ('identity_account'), ('workspace_membership'), ('workspace')
+                WITH required(name, privilege) AS (
+                    VALUES ('identity_account','SELECT'), ('workspace_membership','SELECT'),
+                           ('workspace','SELECT'), ('access_current_facts','SELECT'),
+                           ('access_resource','SELECT'), ('access_member','SELECT'),
+                           ('access_workspace','SELECT'),
+                           ('workspace_membership','UPDATE'), ('access_member','UPDATE'),
+                           ('access_workspace','UPDATE'), ('access_audit','INSERT'),
+                           ('access_invalidation','INSERT'), ('access_delegation','INSERT')
                 ), resolved AS (
-                    SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid
+                    SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
+                           privilege
                     FROM required
                 )
                 SELECT bool_and(
                     table_oid IS NOT NULL
                     AND CASE WHEN table_oid IS NULL THEN FALSE
-                             ELSE has_table_privilege(current_user, table_oid, 'SELECT') END
+                             ELSE has_table_privilege(current_user, table_oid, privilege) END
                 )
                 FROM resolved
                 """
@@ -204,7 +214,7 @@ def _postgres_status() -> str:
                 or required_access is not True
             ):
                 return "marker_schema_or_privilege_mismatch"
-            conn.execute(f"EXPLAIN {CURRENT_ACCOUNT_SQL}", ("__readiness_probe__",))
+            conn.execute(f"EXPLAIN {CURRENT_WORKSPACE_SQL}", workspace_discovery_params("__readiness_probe__"))
             return "ready"
     except (
         psycopg.errors.UndefinedColumn,

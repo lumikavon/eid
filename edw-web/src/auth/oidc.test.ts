@@ -45,6 +45,24 @@ test('wrong state clears transaction and never exchanges a code',async()=>{
   expect(fetch).not.toHaveBeenCalled(); expect(values.size).toBe(0);
 });
 
+test('a validated internal deep link survives the one-shot login transaction',async()=>{
+  const destination='/workspaces/22222222-2222-4222-8222-222222222222/resources/11111111-1111-4111-8111-111111111111';
+  window.location.pathname=destination;
+  const auth=await callbackTransaction();
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({access_token:'memory-token'})));
+  await expect(auth.finishLogin()).resolves.toBe(destination);
+  expect(values.size).toBe(0);
+  expect(history.replaceState).toHaveBeenCalledWith({},'', '/');
+});
+
+test.each(['https://evil.invalid','//evil.invalid','/admin/members?access_token=secret','/workspaces/../admin','javascript:alert(1)'])('unsafe return path %s rejects before exchange',async returnTo=>{
+  const auth=await import('./oidc');
+  values.set('oidc.tx',JSON.stringify({state:'expected',verifier:'verifier',returnTo}));
+  window.location.search='?code=example&state=expected';
+  await expect(auth.finishLogin()).rejects.toThrow('登录返回路径无效');
+  expect(fetch).not.toHaveBeenCalled();expect(values.size).toBe(0);
+});
+
 test.each([
   ['malformed JSON','{broken'],
   ['null JSON','null'],
@@ -79,6 +97,33 @@ test('callback exchanges once and holds tokens only in memory',async()=>{
   await Promise.all([auth.finishLogin(),auth.finishLogin()]);
   expect(fetch).toHaveBeenCalledTimes(1); expect(values.size).toBe(0);
   expect(auth.token()).toBe('test-only-token'); auth.clearSession(); expect(auth.token()).toBeNull();
+});
+
+test('a failed new callback clears an existing session and permits fresh authentication',async()=>{
+ const auth=await callbackTransaction();
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({access_token:'old-memory-token'})));
+ await auth.finishLogin();
+ await auth.beginLogin();
+ expect(auth.token()).toBe('old-memory-token');
+ window.location.search='?code=next&state=wrong';
+ await expect(auth.finishLogin()).rejects.toThrow('state');
+ expect(auth.token()).toBeNull();
+ await auth.beginLogin();
+ const tx=JSON.parse(values.get('oidc.tx')!);
+ window.location.search=`?code=fresh&state=${tx.state}`;
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({access_token:'fresh-memory-token'})));
+ await auth.finishLogin();
+ expect(auth.token()).toBe('fresh-memory-token');
+});
+
+test('a successful pre-deployment transaction without returnTo resumes at root',async()=>{
+ const auth=await import('./oidc');
+ values.set('oidc.tx',JSON.stringify({state:'old-state',verifier:'old-verifier'}));
+ window.location.search='?code=example&state=old-state';
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({access_token:'memory-token'})));
+ await expect(auth.finishLogin()).resolves.toBe('/');
+ expect(auth.token()).toBe('memory-token');expect(values.size).toBe(0);
+ expect(fetch).toHaveBeenCalledOnce();
 });
 
 test('user logout clears memory and ends the Keycloak SSO session with the fixed local return URI',async()=>{
@@ -213,7 +258,7 @@ test('a completed token exchange clears its deadline',async()=>{
     return Promise.resolve(new Response(JSON.stringify({access_token:'test-only-token'})));
   });
 
-  await expect(auth.finishLogin()).resolves.toBeUndefined();
+  await expect(auth.finishLogin()).resolves.toBe('/');
   expect(vi.getTimerCount()).toBe(0);
   await vi.advanceTimersByTimeAsync(auth.TOKEN_EXCHANGE_TIMEOUT_MS);
   expect(signal?.aborted).toBe(false);

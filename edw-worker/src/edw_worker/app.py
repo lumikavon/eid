@@ -49,9 +49,12 @@ def _database_probe(operation_timeout: float) -> None:
             "FROM pg_database WHERE datname=current_database()"
         ).fetchone()
         revision_rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+        # Execute the exact read-only dependency; an absent grant/function fails readiness.
+        conn.execute("SELECT eid_worker_access(%s)",
+                     ("00000000-0000-0000-0000-000000000000",)).fetchone()
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0002_worker_metadata_only")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0006_api_write_only")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:
@@ -145,3 +148,13 @@ def dependency_readiness(_state, timeout_seconds: float = 2.0, **_kwargs):
     except Exception:
         return {"status": "unavailable"}
     return {"status": "ready"}
+
+
+@Panel.register(name="current_access")
+def check_current_access(_state, delegation_id: str, operation: str, purpose: str, **_kwargs):
+    from .access import current_access
+    try:
+        context = current_access(delegation_id, operation, purpose)
+    except Exception:
+        return {"status": "denied"}
+    return {"status": "allowed", "context": context.payload()}

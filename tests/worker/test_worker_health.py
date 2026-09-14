@@ -34,7 +34,7 @@ class Connection:
     def __init__(
         self,
         marker: str,
-        revision: str | list[tuple[str]] = "0002_worker_metadata_only",
+        revision: str | list[tuple[str]] = "0006_api_write_only",
         user: str = "eid_worker",
         database: str = "eid_local_dev",
     ):
@@ -50,7 +50,7 @@ class Connection:
     def __exit__(self, *_args):
         return None
 
-    def execute(self, sql: str):
+    def execute(self, sql: str, params=None):
         self.queries.append(sql)
         if "current_database(), current_user" in sql:
             return QueryResult((self.database, self.user))
@@ -58,6 +58,9 @@ class Connection:
             return QueryResult(self.marker)
         if "alembic_version" in sql:
             return QueryResult(self.revisions)
+        if "eid_worker_access" in sql:
+            assert params == ("00000000-0000-0000-0000-000000000000",)
+            return QueryResult(None)
         raise AssertionError(f"unexpected query: {sql}")
 
 
@@ -87,11 +90,23 @@ def test_worker_dependency_gate_accepts_exact_marker_and_revision(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0002_worker_metadata_only",
+            "0006_api_write_only",
         ),
     )
 
     worker_app.verify_dependencies()
+
+
+def test_worker_readiness_rejects_missing_authorization_execute(monkeypatch):
+    configure_non_database_dependencies(monkeypatch)
+    class MissingExecute(Connection):
+        def execute(self, sql, params=None):
+            if "eid_worker_access" in sql:
+                raise worker_app.psycopg.errors.InsufficientPrivilege()
+            return super().execute(sql, params)
+    monkeypatch.setattr(worker_app.psycopg, "connect", lambda *a, **k: MissingExecute("eid-local-dev-v1"))
+    with pytest.raises(worker_app.psycopg.errors.InsufficientPrivilege):
+        worker_app._database_probe(1)
 
 
 def test_worker_effective_configuration_preserves_delivery_guarantees():
@@ -122,7 +137,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     configure_non_database_dependencies(monkeypatch)
     database = {
         "marker": "eid-local-dev-v1",
-        "revision": "0002_worker_metadata_only",
+        "revision": "0006_api_write_only",
     }
     monkeypatch.setattr(
         worker_app.psycopg,
@@ -133,7 +148,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
     database["revision"] = "0000_stale"
     assert worker_app.dependency_readiness(None) == {"status": "unavailable"}
-    database["revision"] = "0002_worker_metadata_only"
+    database["revision"] = "0006_api_write_only"
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
 
 
@@ -153,7 +168,7 @@ def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
 @pytest.mark.parametrize(
     ("marker", "revision", "message"),
     [
-        ("foreign-environment", "0002_worker_metadata_only", "environment marker"),
+        ("foreign-environment", "0006_api_write_only", "environment marker"),
         ("eid-local-dev-v1", "0000_stale", "schema revision"),
     ],
 )
@@ -189,7 +204,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     configure_non_database_dependencies(monkeypatch)
     connection = Connection(
         "eid-local-dev-v1",
-        "0002_worker_metadata_only",
+        "0006_api_write_only",
         user=user,
         database=database,
     )
@@ -210,7 +225,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     [
         [],
         [("0000_stale",)],
-        [("0002_worker_metadata_only",), ("0002_divergent",)],
+        [("0006_api_write_only",), ("0002_divergent",)],
     ],
 )
 def test_worker_dependency_gate_requires_exactly_one_expected_revision(
@@ -235,7 +250,7 @@ def test_worker_dependency_gate_rejects_redis_failure(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0002_worker_metadata_only",
+            "0006_api_write_only",
         ),
     )
     monkeypatch.setattr(
@@ -255,7 +270,7 @@ def test_worker_dependency_gate_rejects_s3_client_error(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0002_worker_metadata_only",
+            "0006_api_write_only",
         ),
     )
 
@@ -281,7 +296,7 @@ def test_worker_dependency_clients_close_after_success(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0002_worker_metadata_only",
+            "0006_api_write_only",
         ),
     )
 

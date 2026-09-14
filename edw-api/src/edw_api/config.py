@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     keycloak_admin_url: str = "http://keycloak:8080"
     keycloak_monitor_client_id: str = "eid-readiness-monitor"
     keycloak_monitor_client_secret: str = "local-keycloak-readiness-monitor-only"
-    required_schema_revision: str = "0002_worker_metadata_only"
+    required_schema_revision: str = "0006_api_write_only"
     request_id_header: str = Field(default="X-Request-ID")
     worker_node_name: str = "eid-worker@worker"
     worker_health_timeout_seconds: float = Field(default=2.0, gt=0, le=10)

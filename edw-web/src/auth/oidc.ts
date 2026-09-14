@@ -8,9 +8,11 @@ export const TOKEN_EXCHANGE_TIMEOUT_MS = 8000;
 const MAX_TOKEN_RESPONSE_BYTES = 64*1024;
 let accessToken: string | null = null;
 let idToken: string | null = null;
-let callback: Promise<void> | null = null;
+let callback: Promise<string> | null = null;
 
-type OidcTransaction={state:string;verifier:string};
+type OidcTransaction={state:string;verifier:string;returnTo:string};
+const uuidPath='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const safeReturnPath=(path:unknown):path is string=>typeof path==='string'&&(path==='/'||path==='/admin/members'||new RegExp(`^/workspaces/${uuidPath}/(?:home|resources/${uuidPath})$`).test(path));
 
 function parseTransaction(raw:string):OidcTransaction{
   let value:unknown;
@@ -18,7 +20,8 @@ function parseTransaction(raw:string):OidcTransaction{
   if(value===null||typeof value!=='object'||Array.isArray(value))throw new Error('登录事务无效');
   const transaction=value as Record<string,unknown>;
   if(typeof transaction.state!=='string'||transaction.state.length===0||typeof transaction.verifier!=='string'||transaction.verifier.length===0)throw new Error('登录事务无效');
-  return {state:transaction.state,verifier:transaction.verifier};
+  if(transaction.returnTo!==undefined&&!safeReturnPath(transaction.returnTo))throw new Error('登录返回路径无效');
+  return {state:transaction.state,verifier:transaction.verifier,returnTo:transaction.returnTo as string??'/'};
 }
 
 function base64url(bytes: Uint8Array): string {
@@ -30,7 +33,8 @@ export async function beginLogin(): Promise<void> {
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(48)));
   const challenge = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
   const state = base64url(crypto.getRandomValues(new Uint8Array(24)));
-  sessionStorage.setItem('oidc.tx', JSON.stringify({state, verifier}));
+  const returnTo=safeReturnPath(window.location.pathname)?window.location.pathname:'/';
+  sessionStorage.setItem('oidc.tx', JSON.stringify({state, verifier, returnTo}));
   const url = new URL(`${issuer}/protocol/openid-connect/auth`);
   url.searchParams.set('client_id',clientId); url.searchParams.set('redirect_uri',redirectUri);
   url.searchParams.set('response_type','code'); url.searchParams.set('scope','openid profile');
@@ -38,12 +42,15 @@ export async function beginLogin(): Promise<void> {
   window.location.assign(url);
 }
 
-export function finishLogin(): Promise<void> {
-  callback ??= exchangeCode();
+export function finishLogin(): Promise<string> {
+  // exchangeCode synchronously removes the callback URL; StrictMode's second call shares it.
+  // A later navigation to a callback URL starts a new validation, never reuses old success.
+  if(window.location.pathname==='/auth/callback')callback=null;
+  callback ??= exchangeCode().catch(error=>{clearSession();throw error});
   return callback;
 }
 
-async function exchangeCode(): Promise<void> {
+async function exchangeCode(): Promise<string> {
   const params = new URLSearchParams(window.location.search);
   const code=params.get('code'), state=params.get('state');
   const raw=sessionStorage.getItem('oidc.tx'); sessionStorage.removeItem('oidc.tx');
@@ -62,6 +69,7 @@ async function exchangeCode(): Promise<void> {
     if(typeof payload?.access_token!=='string'||payload.access_token.trim().length===0)throw new Error('令牌响应无有效 access_token');
     accessToken=payload.access_token;
     idToken=typeof payload.id_token==='string'&&payload.id_token.trim().length>0?payload.id_token:null;
+    return tx.returnTo;
   } catch(error) {
     if(controller.signal.aborted)throw new Error('授权码交换超时，请稍后重试');
     throw error;

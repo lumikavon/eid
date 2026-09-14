@@ -295,7 +295,7 @@ def test_postgres_marker_and_revision_mismatch_degrade_readiness(
             return None
 
         def execute(self, query):
-            if "WITH required(name)" in query:
+            if "WITH required(name, privilege)" in query:
                 value = True
             else:
                 value = revision if "alembic_version" in query else None
@@ -331,7 +331,7 @@ def test_postgres_probe_applies_connect_and_statement_timeouts(monkeypatch):
             return None
 
         def execute(self, query, *_params):
-            if "WITH required(name)" in query:
+            if "WITH required(name, privilege)" in query:
                 value = True
             else:
                 value = (
@@ -390,7 +390,7 @@ def test_postgres_probe_requires_exactly_one_expected_alembic_version(
                 )
             if "alembic_version" in query:
                 return QueryResult(rows=revision_rows)
-            if "WITH required(name)" in query:
+            if "WITH required(name, privilege)" in query:
                 return QueryResult((True,))
             pytest.fail("account query plan must not run for an invalid migration head set")
 
@@ -415,7 +415,7 @@ def test_postgres_probe_requires_identity_tables_and_select_privileges(
 
         def execute(self, query):
             queries.append(query)
-            if "WITH required(name)" in query:
+            if "WITH required(name, privilege)" in query:
                 value = required_access
             elif "alembic_version" in query:
                 value = main.settings.required_schema_revision
@@ -431,11 +431,20 @@ def test_postgres_probe_requires_identity_tables_and_select_privileges(
     monkeypatch.setattr(main.psycopg, "connect", lambda *_args, **_kwargs: Connection())
 
     assert main._postgres_status() == "marker_schema_or_privilege_mismatch"
-    privilege_query = next(query for query in queries if "WITH required(name)" in query)
+    privilege_query = next(query for query in queries if "WITH required(name, privilege)" in query)
     assert "identity_account" in privilege_query
     assert "workspace_membership" in privilege_query
     assert "workspace" in privilege_query
     assert "has_table_privilege" in privilege_query
+    for table in ("identity_account", "workspace_membership", "workspace", "access_workspace",
+                  "access_member", "access_resource", "access_current_facts"):
+        assert f"('{table}','SELECT')" in privilege_query
+    for table in ("access_audit", "access_invalidation", "access_delegation"):
+        assert f"('{table}','SELECT')" not in privilege_query
+    for table, privilege in [("workspace_membership", "UPDATE"), ("access_member", "UPDATE"),
+                             ("access_workspace", "UPDATE"), ("access_audit", "INSERT"),
+                             ("access_invalidation", "INSERT"), ("access_delegation", "INSERT")]:
+        assert f"('{table}','{privilege}')" in privilege_query
     assert "SELECT *" not in privilege_query.upper()
 
 
@@ -444,7 +453,7 @@ def test_postgres_probe_requires_identity_tables_and_select_privileges(
     [
         ("alembic_version", main.psycopg.errors.UndefinedTable("missing alembic_version")),
         (
-            "WITH required(name)",
+            "WITH required(name, privilege)",
             main.psycopg.errors.InsufficientPrivilege("cannot inspect required tables"),
         ),
     ],
@@ -486,6 +495,7 @@ def test_postgres_probe_keeps_connection_failures_unavailable(monkeypatch):
 
 
 def test_postgres_probe_rejects_present_tables_with_missing_account_column(monkeypatch):
+    from edw_api.access import repository
     queries = []
 
     class Connection:
@@ -503,20 +513,20 @@ def test_postgres_probe_rejects_present_tables_with_missing_account_column(monke
                 )
             if "alembic_version" in query:
                 return QueryResult(rows=[(main.settings.required_schema_revision,)])
-            if "WITH required(name)" in query:
+            if "WITH required(name, privilege)" in query:
                 return QueryResult((True,))
-            if query == f"EXPLAIN {db.CURRENT_ACCOUNT_SQL}":
-                assert params == ("__readiness_probe__",)
+            if query == f"EXPLAIN {repository.CURRENT_WORKSPACE_SQL}":
+                assert params == repository.workspace_discovery_params("__readiness_probe__")
                 raise main.psycopg.errors.UndefinedColumn(
-                    "workspace_membership.active is missing"
+                    "access_current_facts.approval_states is missing"
                 )
             pytest.fail(f"unexpected query: {query}")
 
     monkeypatch.setattr(main.psycopg, "connect", lambda *_args, **_kwargs: Connection())
 
-    assert main.CURRENT_ACCOUNT_SQL is db.CURRENT_ACCOUNT_SQL
+    assert main.CURRENT_WORKSPACE_SQL is repository.CURRENT_WORKSPACE_SQL
     assert main._postgres_status() == "marker_schema_or_privilege_mismatch"
-    assert any(query == f"EXPLAIN {db.CURRENT_ACCOUNT_SQL}" for query, _params in queries)
+    assert any(query == f"EXPLAIN {repository.CURRENT_WORKSPACE_SQL}" for query, _params in queries)
 
 
 @pytest.mark.parametrize(
@@ -582,9 +592,11 @@ def test_account_connection_applies_statement_timeout(monkeypatch):
     assert observed["kwargs"]["options"] == "-c statement_timeout=2000"
 
 
-def test_current_account_executes_the_authoritative_account_query(monkeypatch):
+def test_current_account_uses_current_authorized_workspace_projection(monkeypatch):
+    from edw_api.access import repository
     observed = {}
-    account = {"subject": "actor"}
+    available = [{"actor_id": "a", "workspace_id": "w", "slug": "project", "name": "Project",
+                  "display_name": "Member", "department": "Dept"}]
 
     class Connection:
         def __enter__(self):
@@ -593,20 +605,19 @@ def test_current_account_executes_the_authoritative_account_query(monkeypatch):
         def __exit__(self, *_args):
             return None
 
-        def cursor(self):
-            return self
-
-        def execute(self, query, params):
-            observed["query"] = query
-            observed["params"] = params
-
-        def fetchone(self):
-            return account
+    def current_workspaces(conn, subject):
+        observed["subject"] = subject
+        assert isinstance(conn, Connection)
+        return available[0] if available else None
 
     monkeypatch.setattr(db, "connection", lambda _settings: Connection())
-
-    assert db.current_account(main.settings, "actor") is account
-    assert observed == {"query": db.CURRENT_ACCOUNT_SQL, "params": ("actor",)}
+    monkeypatch.setattr(repository, "first_workspace", current_workspaces)
+    assert db.current_account(main.settings, "actor") == {
+        "actor_id": "a", "subject": "actor", "display_name": "Member", "department": "Dept",
+        "workspace_id": "w", "workspace_slug": "project", "workspace_name": "Project"}
+    assert observed == {"subject": "actor"}
+    available.clear()
+    assert db.current_account(main.settings, "actor") is None
 
 
 def test_account_connection_rejects_wrong_actual_role_before_protected_read(monkeypatch):

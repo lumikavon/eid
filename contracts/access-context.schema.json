@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Current authorization context (C-1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actor_id", "service_id", "tenant_id", "workspace_id", "policy_epoch", "classification", "operation", "purpose", "delegation_scope", "request_id", "trace_id"],
+  "properties": {
+    "actor_id": {"type": "string", "format": "uuid"},
+    "service_id": {"enum": ["eid-api", "eid-worker"]},
+    "tenant_id": {"type": "string", "format": "uuid"},
+    "workspace_id": {"type": "string", "format": "uuid"},
+    "policy_epoch": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer", "minimum": 1}},
+    "classification": {"type": "integer", "minimum": 0, "maximum": 3},
+    "operation": {"enum": ["workspace:read", "resource:read", "inventory:read", "document:create", "document:edit", "document:review", "quality:review", "template:publish", "knowledge:manage", "document:approve", "membership:manage"]},
+    "purpose": {"type": "string", "minLength": 1, "maxLength": 128},
+    "delegation_scope": {"type": ["string", "null"], "format": "uuid"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "trace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+  }
+}

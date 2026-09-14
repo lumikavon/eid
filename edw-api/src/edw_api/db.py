@@ -7,17 +7,6 @@ from psycopg.rows import dict_row
 from .config import Settings
 
 
-CURRENT_ACCOUNT_SQL = """
-SELECT i.id AS actor_id, i.subject, i.display_name, i.department,
-       w.id AS workspace_id, w.slug AS workspace_slug, w.name AS workspace_name
-FROM identity_account i
-JOIN workspace_membership m ON m.identity_id = i.id
-JOIN workspace w ON w.id = m.workspace_id
-WHERE i.subject = %s AND i.active AND m.active
-ORDER BY w.id LIMIT 1
-"""
-
-
 @contextmanager
 def connection(settings: Settings) -> Iterator[psycopg.Connection]:
     with psycopg.connect(
@@ -33,6 +22,12 @@ def connection(settings: Settings) -> Iterator[psycopg.Connection]:
 
 
 def current_account(settings: Settings, subject: str) -> dict | None:
-    with connection(settings) as conn, conn.cursor() as cur:
-        cur.execute(CURRENT_ACCOUNT_SQL, (subject,))
-        return cur.fetchone()
+    from .access.repository import first_workspace
+    with connection(settings) as conn:
+        item = first_workspace(conn, subject)
+        if item is None:
+            return None
+        return {"actor_id": item["actor_id"], "subject": subject,
+                "display_name": item["display_name"], "department": item["department"],
+                "workspace_id": item["workspace_id"], "workspace_slug": item["slug"],
+                "workspace_name": item["name"]}

@@ -3,6 +3,8 @@
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from scripts.verify_local_environment import ownership, verify_runtime_images
 
@@ -21,6 +23,7 @@ EXPECTED_SERVICES = (
 )
 LOCAL_CREDENTIALS = {
     "browser_password": "eid-local-member",
+    "access_fixture_password": "eid-local-access",
     "postgres_admin_password": "local-postgres-admin-only",
     "keycloak_admin_password": "local-keycloak-admin-only",
     "keycloak_monitor_client_secret": "local-keycloak-readiness-monitor-only",
@@ -51,12 +54,15 @@ def _owned_service_containers(owner_nonce: str) -> dict[str, str]:
         )
         container_ids = [item for item in output.splitlines() if item]
         services = {}
-        for container_id in container_ids:
-            inspected = json.loads(
-                subprocess.check_output(
-                    ["docker", "inspect", container_id], text=True, timeout=30
-                )
-            )[0]
+        if len(container_ids) != len(EXPECTED_SERVICES):
+            raise RuntimeError("Runtime log service inventory does not match Compose")
+        inspections = json.loads(subprocess.check_output(
+            ["docker", "inspect", *container_ids], text=True, timeout=30))
+        if not isinstance(inspections, list) or len(inspections) != len(container_ids):
+            raise RuntimeError("Runtime log inspection inventory does not match Compose")
+        for container_id, inspected in zip(container_ids, inspections, strict=True):
+            if not isinstance(inspected.get("Id"), str) or not inspected["Id"].startswith(container_id):
+                raise RuntimeError("Runtime log inspected container identity changed")
             labels = (inspected.get("Config") or {}).get("Labels") or {}
             service = labels.get("com.docker.compose.service")
             if (
@@ -77,9 +83,11 @@ def _owned_service_containers(owner_nonce: str) -> dict[str, str]:
 
 
 def scan_runtime_logs() -> dict:
-    state = ownership(create=False)
-    containers = _owned_service_containers(state["nonce"])
-    runtime_images = verify_runtime_images()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        image_check = executor.submit(verify_runtime_images)
+        state = ownership(create=False)
+        containers = _owned_service_containers(state["nonce"])
+        runtime_images = image_check.result()
     recorded_services = runtime_images["services"]
     if any(
         recorded_services[service]["container_id"] != containers[service]
@@ -98,10 +106,11 @@ def scan_runtime_logs() -> dict:
         "local_credential": re.compile("|".join(map(re.escape, credential_values))),
     }
     results = {}
+    cutoff = datetime.now(timezone.utc).isoformat()
     for service in EXPECTED_SERVICES:
         try:
             completed = subprocess.run(
-                ["docker", "logs", containers[service]],
+                ["docker", "logs", "--until", cutoff, containers[service]],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -116,17 +125,20 @@ def scan_runtime_logs() -> dict:
         results[service] = {
             "matches": {name: len(rule.findall(log)) for name, rule in rules.items()},
         }
-    final_state = ownership(create=False)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        image_check = executor.submit(verify_runtime_images)
+        final_state = ownership(create=False)
+        final_containers = _owned_service_containers(state["nonce"])
+        final_runtime_images = image_check.result()
     if final_state.get("nonce") != state["nonce"]:
         raise RuntimeError("Runtime ownership changed during log scan")
-    final_containers = _owned_service_containers(state["nonce"])
     if final_containers != containers:
         raise RuntimeError("Runtime container inventory changed during scan")
-    final_runtime_images = verify_runtime_images()
     if final_runtime_images != runtime_images:
         raise RuntimeError("Runtime image or source binding changed during log scan")
     return {
         "project": PROJECT,
+        "log_cutoff_utc": cutoff,
         "passed": all(
             not count for result in results.values() for count in result["matches"].values()
         ),

@@ -1,6 +1,6 @@
 # EID 本地三工程工作区
 
-本仓库提供 Story 1.1 的本地隔离开发环境：`edw-web`、`edw-api`、`edw-worker`，以及真实的 PostgreSQL、Keycloak、RabbitMQ、Redis、SeaweedFS S3 和 NGINX。统一入口为 <http://localhost:18080>。
+本仓库提供本地隔离三工程工作区：`edw-web`、`edw-api`、`edw-worker`，以及真实的 PostgreSQL、Keycloak、RabbitMQ、Redis、SeaweedFS S3 和 NGINX。统一入口为 <http://localhost:18080>。各 Story 的完成状态与独立验收证据见 `_bmad-output/implementation-artifacts/`。
 
 ## 启动前提
 
@@ -89,6 +89,8 @@ uv run --frozen ruff check edw-api edw-worker scripts tests migrations
 pnpm --filter edw-web lint
 pnpm --filter edw-web typecheck
 pnpm --filter edw-web test
+uv run --frozen python -m scripts.seed_access_fixtures > .local/access-fixtures.json
+if ($LASTEXITCODE -ne 0) { throw '权限验收夹具初始化失败' }
 pnpm exec playwright test tests/ux
 ```
 
@@ -96,7 +98,37 @@ pnpm exec playwright test tests/ux
 
 ```powershell
 $env:EID_RUN_LIVE_TESTS = '1'
-uv run --frozen pytest tests/ops/test_live_dependencies.py tests/ops/test_live_current_account.py tests/ops/test_live_migration.py -q
+uv run --frozen pytest tests/ops/test_live_dependencies.py tests/ops/test_live_current_account.py tests/ops/test_live_migration.py tests/ops/test_live_access.py -q
 ```
 
 当前证据边界只覆盖本地隔离环境。企业身份联邦、企业系统联调、真实模型效果，以及生产安全、容量、高可用不在 Story 1.1 的本地通过范围内；完整 Story 结论还需浏览器 UX 验证和独立代码审查。
+
+## 当前项目权限（Story 1.2）
+
+`0003_current_access` 增加最小项目/成员/资源策略、policy epoch、审计、失效记录及受限 delegation。`0004_access_correlation` 补充审计与 delegation 的 request/trace 关联；历史缺失关联保留为空，不伪造追踪值。Worker 仍不能直接读取身份或策略表，只能执行 `eid_worker_access(uuid)` 读取已经由 API 创建、绑定原发起人、操作、资源、用途、服务与五分钟期限的授权记录，并在每次阶段/输出检查时重新决策。数据库直接拒绝 Worker 对 ACL/head/approval/publication 的更改。
+
+所有角色都必须满足 RBAC 操作 **且** ABAC 项目/客户/产品/部门/所有者/审批状态/有效期 **且** 密级上限。系统管理员也不绕过范围或密级。有效期使用数据库时间；无 allow 缓存，历史 epoch 不能授权。权限变更锁定项目并核验 expected epoch，策略、epoch、审计及失效记录同事务提交，审计失败整笔回滚。Web 在下一次拒绝响应后清除受控状态，项目切换先清除旧内容；未发生请求时通过15秒账户刷新发现变化。这不承诺召回已见字节或生产撤权 SLA。
+
+`0005_delegation_epoch` 通过向前迁移增加 Worker 委托版本检查。权限变化后旧委托即失效，即使成员随后恢复访问也不能复活旧委托，必须重新签发；共享授权策略同时检查这一条件。
+
+`0006_api_write_only` 移除 API 对审计、失效及委托表的不必要读取权限，保留实际所需的写入权限。成员审计记录变更前后的完整行、活动状态及实际新版本；运行就绪探针复用当前账户发现查询检查所需结构。
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/v1/access/workspaces` | 当前可访问项目 |
+| `GET /api/v1/access/workspaces/{id}` | 重新解析项目权限/epoch |
+| `GET/PUT /api/v1/access/workspaces/{id}/members[/{actor_id}]` | 获准管理员读取/修改已有成员策略 |
+| `GET /api/v1/access/workspaces/{id}/resources/{resource_id}` | 当前授权后的最小资源元数据 |
+| `POST /api/v1/access/workspaces/{id}/delegations` | 建立受限后台授权引用，不表示提交了任务 |
+
+项目列表返回 `data.workspaces` 与 `data.next_cursor`，通过 `after` 继续读取，每页最多50项且受响应字节预算约束；选择器提供前后页，支持超过200个项目。每页重新检查当前权限，拒绝的项目不返回；当前项目独立重新授权，不因位于其他页而误判撤权。范围编辑器逐项保留字符串，逗号和换行不再作为权限范围分隔符。
+
+项目选择器及项目卡支持切换；`/workspaces/{id}/home`、`/workspaces/{id}/resources/{id}` 和 `/admin/members` 深链在登录后重新授权。新增 X-18 账户/项目和 X-20 成员表单遵循既有视觉体系；原型源文件不改。当前资源只是权限验证所需的元数据，不代表文档编辑、审批或发布已实现。Task engine、提交、恢复和 SSE 分属后续 Stories。
+
+资源操作必须绑定具体资源；项目返回的操作列表仅供界面导航，不替代资源授权。资源拒绝保留已获准项目的返回入口，并重新核验成员关系；重新授权拒绝当前项目时立即清除旧内容。并发保存遇到409会关闭旧编辑器、读取新策略后再确认。成员列表按不可变成员ID游标分页（`after`/`next_cursor`），每页最多50项并按响应大小收缩；单项较大策略仍受256 KiB客户端响应上限约束。保存中禁用项目选择器，页面历史导航不会取消已经提交的权限变更；审计记录仍对应原项目。
+
+权限验收夹具脚本创建两个明确标识的本地项目和七个 Keycloak 用户：`eid-access-author`、`eid-access-expert`、`eid-access-quality`、`eid-access-template-admin`、`eid-access-knowledge-admin`、`eid-access-approver`、`eid-access-system-admin`。它们仅使用本地测试密码 `eid-local-access`，角色分别对应作者、专家、质量、模板管理员、知识管理员、审批人、系统管理员；不映射企业人员或数据。
+
+脚本先执行完整本地隔离核验；身份归属属性只允许 Keycloak 管理员读写，成功创建回执留在 `.local/access-fixture-receipts.json`。不匹配的已有用户或数据库映射会停止；脚本不覆盖既有成员政策、不删除用户、数据或数据库。恢复仅作用于有本工具创建回执的缺失归属/资料，更新保留完整用户表示。七角色与双项目的本机 ID 输出到 `.local/access-fixtures.json`，只供真实浏览器验收使用。测试会通过授权 API 暂时撤销并恢复作者的项目成员关系，并保留真实审计。
+
+fixture创建由本地进程锁串行执行，回执采用原子替换；已有fixture密码通过新的本地PKCE登录验证，发现漂移即停止。九服务日志扫描保留从容器日志起点到共同 `log_cutoff_utc` 的完整范围，扫描前后再次核验所有权、容器、镜像和源绑定。

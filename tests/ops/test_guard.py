@@ -380,6 +380,7 @@ def test_ownership_accepts_exact_expected_stopped_volume_attachment(
             return "expected-container"
         if args[1] == "inspect":
             return json.dumps([{
+                "Id": "expected-container",
                 "Config": {"Labels": {
                     "com.docker.compose.project": guard.PROJECT,
                     "com.docker.compose.service": service,
@@ -440,13 +441,51 @@ def test_ownership_rejects_invalid_attachment_for_each_managed_volume(
         if args[1:3] == ("ps", "-aq"):
             return "\n".join(container_ids)
         if args[1] == "inspect":
-            assert args[2] in container_ids
-            return json.dumps([container_metadata()])
+            assert all(cid in container_ids for cid in args[2:])
+            return json.dumps([container_metadata() | {"Id": cid} for cid in args[2:]])
         raise AssertionError(args)
 
     monkeypatch.setattr(guard, "command", fake_command)
     with pytest.raises(IsolationError):
         ownership()
+
+
+@pytest.mark.parametrize("failure", ["missing", "wrong-id", "foreign-attachment"])
+@pytest.mark.parametrize("count", [2, 101])
+def test_batched_host_inspection_keeps_foreign_attachments_and_exact_inventory(monkeypatch, tmp_path, failure, count):
+    import scripts.verify_local_environment as guard
+    state = tmp_path / "ownership.json"
+    state.write_text(json.dumps({"root": str(guard.ROOT), "project": guard.PROJECT, "nonce": "owned"}))
+    monkeypatch.setattr(guard, "STATE", state)
+    monkeypatch.setattr(guard, "verify_engine", lambda: None)
+    calls = []
+    identifiers = [f"owned-{index}" for index in range(count-1)] + ["outside"]
+    def command(*args):
+        calls.append(args)
+        if args[1:3]==("volume","ls"):
+            return "eid-local-postgres"
+        if args[1:3]==("volume","inspect"):
+            return json.dumps([{"Labels":{"com.docker.compose.project":guard.PROJECT,"io.eid.owner":"owned"}}])
+        if args[1:3]==("ps","-aq"):
+            assert len(args)==3  # No project filter may hide a foreign attachment.
+            return "\n".join(identifiers)
+        if args[1]=="inspect":
+            batch = len([call for call in calls if call[1] == "inspect"])-1
+            assert args[2:] == tuple(identifiers[batch*100:(batch+1)*100])
+            rows = [{"Id":cid,"Config":{"Labels":{
+                "com.docker.compose.project":guard.PROJECT if cid.startswith("owned-") else "foreign",
+                "com.docker.compose.service":"postgres","io.eid.owner":"owned",
+            }},"Mounts":[{"Type":"volume","Name":"eid-local-postgres"}]} for cid in args[2:]]
+            if failure=="missing" and "outside" in args[2:]:
+                rows.pop()
+            if failure=="wrong-id" and "outside" in args[2:]:
+                rows[0]["Id"]="wrong"
+            return json.dumps(rows)
+        raise AssertionError(args)
+    monkeypatch.setattr(guard,"command",command)
+    with pytest.raises(IsolationError):
+        ownership()
+    assert len([c for c in calls if c[1]=="inspect"]) == (count+99)//100
 
 
 def test_s3_configuration_has_distinct_exact_least_privilege_identities():
@@ -1585,8 +1624,11 @@ def test_image_lock_cannot_be_satisfied_by_comments(monkeypatch, tmp_path, surfa
         verify_image_manifest()
 
 
-@pytest.mark.parametrize("drift", ["replacement", "stopped", "unhealthy", "wrong-image", "owner-record"])
-def test_runtime_image_collection_rechecks_earlier_containers(monkeypatch, drift):
+@pytest.mark.parametrize("drift,target", [
+    *[(drift, "api") for drift in ("replacement", "stopped", "unhealthy", "wrong-image", "owner-record")],
+    *[(drift, "postgres") for drift in ("replacement", "stopped", "wrong-image")],
+])
+def test_runtime_image_collection_rechecks_earlier_containers(monkeypatch, drift, target):
     import scripts.verify_local_environment as guard
 
     services = {"api": "api:0.1.0", "web": "web:0.1.0", "worker": "worker:0.1.0"}
@@ -1594,21 +1636,28 @@ def test_runtime_image_collection_rechecks_earlier_containers(monkeypatch, drift
     image_id = f"sha256:{'b' * 64}"
     monkeypatch.setattr(guard, "build_images", lambda: services)
     monkeypatch.setattr(guard, "_recorded_owner_nonce", lambda: "owner")
-    monkeypatch.setattr(guard, "infrastructure_images", lambda: {})
+    monkeypatch.setattr(guard, "infrastructure_images", lambda: {"postgres": "postgres:17.6"})
     monkeypatch.setattr(guard, "source_fingerprint", lambda service: fingerprint)
     collected = set()
-    monkeypatch.setattr(guard, "_recorded_owner_nonce", lambda: "other-owner" if drift == "owner-record" and len(collected) == 3 else "owner")
+    all_services = set(services) | {"postgres"}
+    lookups = {service: 0 for service in all_services}
+    inspected = set()
+    monkeypatch.setattr(guard, "_recorded_owner_nonce", lambda: "other-owner" if drift == "owner-record" and len(collected) == len(all_services) else "owner")
 
     def fake_command(*args):
         if args[1:3] == ("image", "inspect"):
             collected.add(args[3].split(":")[0])
             return json.dumps([{"Id": image_id, "Config": {"Labels": {"io.eid.source-fingerprint": fingerprint}}}])
-        changed = len(collected) == 3
         if args[1:3] == ("ps", "-q"):
             service = args[-1].rsplit("=", 1)[1]
-            return "replacement-api" if changed and service == "api" and drift == "replacement" else f"container-{service}"
+            lookups[service] += 1
+            changed = lookups[service] >= 2
+            if changed:
+                assert inspected == all_services, "Replacement pass started before all initial reads completed"
+            return f"replacement-{target}" if changed and service == target and drift == "replacement" else f"container-{service}"
         if args[1] == "inspect":
-            changed = changed and args[2].endswith("api")
+            inspected.add(args[2].removeprefix("container-").removeprefix("replacement-"))
+            changed = lookups[target] >= 2 and args[2].endswith(target)
             return json.dumps([{
                 "Image": f"sha256:{'c' * 64}" if changed and drift == "wrong-image" else image_id,
                 "Config": {"Labels": {"io.eid.owner": "owner"}},
@@ -1619,6 +1668,7 @@ def test_runtime_image_collection_rechecks_earlier_containers(monkeypatch, drift
     monkeypatch.setattr(guard, "command", fake_command)
     with pytest.raises(IsolationError):
         guard.current_runtime_images()
+    assert lookups[target] == 2
 
 
 def test_keycloak_readiness_is_a_bounded_bootstrap_gate():

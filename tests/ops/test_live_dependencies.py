@@ -109,7 +109,7 @@ def test_worker_identity_can_read_metadata_but_not_identity_workspace_data():
     with psycopg.connect(
         "postgresql://eid_worker:local-worker-only@localhost:55432/eid_local_dev", connect_timeout=3
     ) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0002_worker_metadata_only",)]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_api_write_only",)]
         for table in ("identity_account", "workspace", "workspace_membership"):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 conn.execute(f"SELECT * FROM {table} LIMIT 0")
@@ -117,6 +117,16 @@ def test_worker_identity_can_read_metadata_but_not_identity_workspace_data():
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("UPDATE workspace_membership SET active = false")
         conn.rollback()
+        for statement in (
+            "UPDATE access_member SET clearance=3 WHERE false",
+            "UPDATE access_resource SET head_ref=NULL WHERE false",
+            "UPDATE access_resource SET approval_state='approved' WHERE false",
+            "UPDATE access_resource SET publication_state='published' WHERE false",
+            "UPDATE access_delegation SET active=true WHERE false",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(statement)
+            conn.rollback()
 
 
 def test_worker_loss_denies_readiness_and_recovers():
