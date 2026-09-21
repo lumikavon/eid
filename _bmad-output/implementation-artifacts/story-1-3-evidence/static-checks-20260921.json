@@ -1,0 +1,34 @@
+{
+  "scope": "source and compilation only; tests not run; environment validation cancelled by user",
+  "node": "24.20.0",
+  "commands": [
+    {
+      "cwd": "edw-web",
+      "command": "node node_modules/typescript/bin/tsc -b",
+      "exit_code": 0
+    },
+    {
+      "cwd": "edw-web",
+      "command": "node node_modules/eslint/bin/eslint.js .",
+      "exit_code": 0
+    },
+    {
+      "cwd": "edw-web",
+      "command": "node node_modules/vite/bin/vite.js build",
+      "exit_code": 0,
+      "modules": 96,
+      "js": "index-Bx6DCJXp.js",
+      "css": "index-BZGbf2cd.css"
+    },
+    {
+      "cwd": ".",
+      "command": "python -m ruff check [discovery source, migration, fixture, contract, security and ops test source paths]",
+      "exit_code": 0
+    },
+    {
+      "cwd": ".",
+      "command": "py_compile.compile over 31 Python paths in review-manifest.json, cfile in .local",
+      "exit_code": 0
+    }
+  ]
+}

@@ -28,6 +28,8 @@ REQUIRED_TABLES = {
     "workspace_membership",
     "access_workspace", "access_member", "access_resource", "access_audit",
     "access_invalidation", "access_delegation", "access_current_facts",
+    "discovery_record", "discovery_participant", "discovery_favorite",
+    "discovery_restore_policy", "discovery_receipt",
 }
 
 
@@ -105,7 +107,7 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0006_api_write_only"
+            ).scalar_one() == "0007_workspace_discovery"
             assert set(
                 connection.execute(
                     sa.text(

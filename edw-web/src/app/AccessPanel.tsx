@@ -35,7 +35,7 @@ export default function AccessPanel({current,onReject,onRefresh,onSaved,resource
  },[blocked.members,blocked.resource,cache,current.actor_id,current.workspace_id]);
  useLayoutEffect(()=>{if(policyChanged)onRefresh()},[policyChanged,onRefresh]);
  const error=projects.error||memberError||resourceError;
- const switchProject=(id:string)=>{cache.removeQueries({queryKey:['access']});setEditing(null);setMessage('');navigate(`/workspaces/${id}/home`)};
+ const switchProject=(id:string)=>{for(const queryKey of [['access'],['discovery']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}setEditing(null);setMessage('');navigate(`/workspaces/${id}/home`)};
  const save=async()=>{
   if(!editing||!members.data||saving)return;setSaving(true);setMessage('');
   try{const result=await saveMember(current.workspace_id,editing,members.data.policy_epoch);if(!alive.current)return;setEditing(null);onSaved(`权限已保存，审计编号 ${result.audit_id}`);cache.removeQueries({queryKey:['access']});onRefresh()}

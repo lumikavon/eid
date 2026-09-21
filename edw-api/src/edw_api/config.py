@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,7 +23,8 @@ class Settings(BaseSettings):
     keycloak_admin_url: str = "http://keycloak:8080"
     keycloak_monitor_client_id: str = "eid-readiness-monitor"
     keycloak_monitor_client_secret: str = "local-keycloak-readiness-monitor-only"
-    required_schema_revision: str = "0006_api_write_only"
+    required_schema_revision: str = "0007_workspace_discovery"
+    discovery_policy_environment: Literal["production", "isolated_development"] = "production"
     request_id_header: str = Field(default="X-Request-ID")
     worker_node_name: str = "eid-worker@worker"
     worker_health_timeout_seconds: float = Field(default=2.0, gt=0, le=10)

@@ -2,6 +2,26 @@
 
 本仓库提供本地隔离三工程工作区：`edw-web`、`edw-api`、`edw-worker`，以及真实的 PostgreSQL、Keycloak、RabbitMQ、Redis、SeaweedFS S3 和 NGINX。统一入口为 <http://localhost:18080>。各 Story 的完成状态与独立验收证据见 `_bmad-output/implementation-artifacts/`。
 
+## 工作区发现（Story 1.3，软件交付）
+
+本次交付仅包括软件实现、独立静态审查和编译。用户已取消实际环境验证，运行行为保持未验证；以下运行命令仅为历史操作参考，当前不执行测试、启动、迁移、fixture 或部署。
+
+实现提供当前授权下的首页汇总、记录列表、搜索、私人收藏和回收站元数据。各列表的标签与类型、生命周期、集合筛选取交集；数量及字节统计使用相同授权集合。搜索词仅进入 POST 正文，最多128个 Unicode 码点；中文组合输入在提交后应用上限。账户及项目选择位于右上“账户与会话”，成员管理保留在账户页。
+
+| 接口（前缀 `/api/v1/workspaces/{workspace_id}`） | 用途 |
+|---|---|
+| `GET /discovery`、`GET /discovery/summary` | 有界游标列表、当前授权汇总 |
+| `GET /discovery/{resource_id}` | 当前授权详情及可用操作 |
+| `POST /search` | 元数据搜索，与其他筛选取交集 |
+| `PUT /favorites/{resource_id}` | 当前主体的收藏目标状态及 expected revision |
+| `POST /recycle/{resource_id}:restore` | 依明确政策恢复列表可见性 |
+
+收藏和恢复命令必须携带幂等键；未知结果只能核对原操作，不能假报成功。恢复不改变 ARCHIVED 状态、正文/head 或历史，缺少有效政策时拒绝；隔离开发政策只作用于有明确 owner/version 的专用验收记录。质量、生成量、审校与推荐等后续能力没有来源时保持未评估/未开放；元数据字节不代表附件、磁盘占用或配额。
+
+`0007_workspace_discovery` 仅扩展发现表和 API 所需窄授权，Worker 不获得新表权限；禁止 downgrade 或清理旧数据。新 fixture 按 run 追加专有项目/记录，复用已收据化身份而不重置其密码或原项目策略。浏览器验收在当前候选、真实环境和初始状态复核后消耗一次性 run；失败及未知结果均保留，不复用。
+
+当前软件审查与编译结果见 [Story 1.3 软件交付记录](_bmad-output/implementation-artifacts/story-1-3-software-review-2026-09-21.md)，历史验证保留在 [验证记录](_bmad-output/implementation-artifacts/story-1-3-validation.md)。本节不是运行验收通过的声明。
+
 ## 启动前提
 
 - Windows PowerShell 7；当前 context 必须是本机 `desktop-linux`，实际引擎必须为 `linux/amd64`。脚本记录 Docker Server/API、Compose 与 buildx 版本，并核验 Compose `--wait`/`--wait-timeout` 及 BuildKit/buildx 能力。本地已验证组合为 Docker Server `29.1.3`、API `1.52`、Compose `5.0.1`、buildx `v0.30.1-desktop.1`；这些是兼容证据，不是唯一允许版本。

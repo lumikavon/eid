@@ -166,9 +166,11 @@ test('real Keycloak PKCE login returns mapped account without persistent tokens'
   await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
   await expect(page.locator('.uinfo b')).toHaveText('本地项目成员');
   expect(await sidebarGeometry(page)).toEqual(signedOutSidebar);
-  expect(page.url()).toBe('http://localhost:18080/');
+  await expect(page).toHaveURL(/\/workspaces\/[0-9a-f-]{36}\/home$/);
   expect(await page.evaluate(()=>({local:Object.keys(localStorage),session:Object.keys(sessionStorage)}))).toEqual({local:[],session:[]});
   await page.screenshot({path:'test-results/workspace-authenticated.png'});
+  await page.getByText('账户与运行状态',{exact:true}).click();
+  await expect(page.locator('details.workspace-runtime')).toHaveJSProperty('open',true);
   await page.getByRole('button',{name:'安全退出',exact:true}).click();
   await page.waitForURL('http://localhost:18080/');
   await expect(page.locator('.uinfo b')).toHaveText('未登录');
@@ -178,6 +180,7 @@ test('real Keycloak PKCE login returns mapped account without persistent tokens'
 });
 
 test('an intermittent account 503 keeps the in-memory session and recovers on the scheduled 15 second retry',async({page})=>{
+  await page.clock.install();
   await page.addInitScript(()=>{
     const nativeSetInterval=window.setInterval;
     const scheduled:number[]=[];
@@ -188,6 +191,7 @@ test('an intermittent account 503 keeps the in-memory session and recovers on th
     };
   });
   let requestCount=0;
+  const readPaths:string[]=[];
   const authorizationHeaders:string[]=[];
   let releaseRetry=()=>{};
   let observeRetry=()=>{};
@@ -195,13 +199,13 @@ test('an intermittent account 503 keeps the in-memory session and recovers on th
   const holdRetry=new Promise<void>(resolve=>{releaseRetry=resolve});
   await page.route('**/api/v1/me',async route=>{
     requestCount+=1;
+    readPaths.push(new URL(page.url()).pathname);
     authorizationHeaders.push(route.request().headers().authorization??'');
     if(requestCount===1){
       await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'account service unavailable'}})});
       return;
     }
-    observeRetry();
-    await holdRetry;
+    if(requestCount===2){observeRetry();await holdRetry}
     await route.continue();
   });
   await page.goto('/');
@@ -210,18 +214,28 @@ test('an intermittent account 503 keeps the in-memory session and recovers on th
   await page.locator('#password').fill('eid-local-member');
   await page.locator('#kc-login').click();
   await expect(page.getByTestId('auth-status')).toHaveText('账户服务暂时不可用');
+  await page.clock.pauseAt(await page.evaluate(()=>Date.now()+1000));
   await expect(page.getByRole('alert')).toContainText('将自动重试，也可手动重试');
   expect(await page.evaluate(()=>({local:Object.keys(localStorage),session:Object.keys(sessionStorage)}))).toEqual({local:[],session:[]});
 
-  await retryRequested;
-  expect(await page.evaluate(()=>(window as typeof window&{__scheduledIntervals:number[]}).__scheduledIntervals)).toContain(15000);
-  await expect(page.getByTestId('auth-status')).toHaveText('正在载入当前账户');
-  releaseRetry();
+  expect(readPaths).toEqual(['/']);
+  try{
+    await page.clock.fastForward(15000);
+    await retryRequested;
+    expect(await page.evaluate(()=>(window as typeof window&{__scheduledIntervals:number[]}).__scheduledIntervals)).toContain(15000);
+    await expect(page.getByTestId('auth-status')).toHaveText('正在载入当前账户');
+    expect(readPaths).toEqual(['/','/']);
+    expect(authorizationHeaders).toHaveLength(2);
+    expect(authorizationHeaders[0]).toMatch(/^Bearer /);
+    expect(authorizationHeaders[1]).toBe(authorizationHeaders[0]);
+  }finally{releaseRetry()}
+  await page.clock.resume();
+  await expect(page).toHaveURL(/\/workspaces\/[0-9a-f-]{36}\/home$/);
+  await expect.poll(()=>readPaths).toEqual(['/','/',new URL(page.url()).pathname]);
   await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
   await expect(page.locator('.uinfo b')).toHaveText('本地项目成员');
-  expect(authorizationHeaders).toHaveLength(2);
-  expect(authorizationHeaders[0]).toMatch(/^Bearer /);
-  expect(authorizationHeaders[1]).toBe(authorizationHeaders[0]);
+  // The third request belongs to the destination route, after the scheduled retry.
+  expect(authorizationHeaders).toEqual(Array(3).fill(authorizationHeaders[0]));
   expect(await page.evaluate(()=>({local:Object.keys(localStorage),session:Object.keys(sessionStorage)}))).toEqual({local:[],session:[]});
 });
 
@@ -274,39 +288,86 @@ test('an invalid callback state is readable and offers a fresh login',async({pag
   expect(page.url()).toBe('http://localhost:18080/');
 });
 
-test('logout fences a delayed periodic account refresh',async({page})=>{
+test('logout replaces the document with a successful periodic refresh held and requires a fresh PKCE login',async({page})=>{
+  await page.clock.install();
   let logoutMethod='';let logoutUrl='';
   page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/protocol/openid-connect/logout')){logoutMethod=request.method();logoutUrl=request.url()}});
-  let requestCount=0;
+  const readPaths:string[]=[];const authorizationHeaders:string[]=[];let periodicArmed=false;let periodicReads=0;
+  let periodicStatus:number|undefined;
   let releasePeriodic=()=>{};
   let observePeriodic=()=>{};
+  let completePeriodic=()=>{};
   const periodicRequested=new Promise<void>(resolve=>{observePeriodic=resolve});
   const holdPeriodic=new Promise<void>(resolve=>{releasePeriodic=resolve});
+  const periodicCompleted=new Promise<void>(resolve=>{completePeriodic=resolve});
   await page.route('**/api/v1/me',async route=>{
-    requestCount+=1;
-    if(requestCount===2){observePeriodic();await holdPeriodic}
-    await route.continue().catch(()=>{});
+    readPaths.push(new URL(page.url()).pathname);
+    authorizationHeaders.push(route.request().headers().authorization??'');
+    const held=periodicArmed;
+    if(!held){await route.continue();return}
+    periodicReads++;
+    try{
+      const response=await route.fetch({timeout:10000,maxRetries:0,maxRedirects:0});
+      periodicStatus=response.status();observePeriodic();await holdPeriodic;
+      // Logout destroys the old document. Abort only releases this held route;
+      // its completion cannot prove the old page received a successful response.
+      await route.abort('aborted');
+    }finally{completePeriodic()}
   });
   await page.goto('/');
   await page.getByRole('button',{name:'登录工作区',exact:true}).click();
   await page.locator('#username').fill('local-member');
   await page.locator('#password').fill('eid-local-member');
   await page.locator('#kc-login').click();
+  await expect(page).toHaveURL(/\/workspaces\/[0-9a-f-]{36}\/home$/);
+  const homePath=new URL(page.url()).pathname;
+  await expect.poll(()=>readPaths).toEqual(['/',homePath]);
   await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
-  await periodicRequested;
-  await page.getByRole('button',{name:'安全退出',exact:true}).click();
-  await page.waitForURL('http://localhost:18080/');
-  expect(logoutMethod).toBe('POST');
-  expect(new URL(logoutUrl).search).toBe('');
-  await expect(page.getByTestId('auth-status')).toHaveText('需要登录');
-  await expect(page.locator('.uinfo b')).toHaveText('未登录');
-  releasePeriodic();
-  await page.waitForTimeout(300);
+  await page.clock.pauseAt(await page.evaluate(()=>Date.now()+1000));
+  await page.getByText('账户与运行状态',{exact:true}).click();
+  await expect(page.locator('details.workspace-runtime')).toHaveJSProperty('open',true);
+  periodicArmed=true;
+  try{
+    await page.clock.fastForward(15000);
+    await periodicRequested;
+    expect(periodicReads).toBe(1);
+    expect(periodicStatus).toBe(200);
+    expect(readPaths).toEqual(['/',homePath,homePath]);
+    expect(authorizationHeaders[0]).toMatch(/^Bearer /);
+    expect(authorizationHeaders).toEqual(Array(3).fill(authorizationHeaders[0]));
+    await expect(page.getByTestId('auth-status')).toHaveText('正在载入当前账户');
+    await expect(page).toHaveURL(homePath);
+    await page.evaluate(()=>{document.documentElement.dataset.periodicLogoutDocument='held-refresh'});
+    await page.getByRole('button',{name:'安全退出',exact:true}).click();
+    await page.waitForURL('http://localhost:18080/');
+    expect(await page.evaluate(()=>document.documentElement.dataset.periodicLogoutDocument)).toBeUndefined();
+    expect(logoutMethod).toBe('POST');
+    expect(new URL(logoutUrl).search).toBe('');
+    await expect(page.getByTestId('auth-status')).toHaveText('需要登录');
+    await expect(page.locator('.uinfo b')).toHaveText('未登录');
+  }finally{releasePeriodic()}
+  await periodicCompleted;
+  periodicArmed=false;
+  await page.clock.resume();
   await expect(page.getByTestId('auth-status')).toHaveText('需要登录');
   await expect(page.locator('.uinfo b')).toHaveText('未登录');
   await expect(page.getByRole('button',{name:'安全退出',exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>({local:Object.keys(localStorage),session:Object.keys(sessionStorage)}))).toEqual({local:[],session:[]});
   await page.getByRole('button',{name:'登录工作区',exact:true}).click();
   await expect(page.locator('#username')).toBeVisible();
+  await expect(page.locator('#password')).toBeVisible();
+  await page.locator('#username').fill('local-member');
+  await page.locator('#password').fill('eid-local-member');
+  const freshExchange=page.waitForResponse(response=>response.url().endsWith('/protocol/openid-connect/token'));
+  await page.locator('#kc-login').click();
+  expect((await freshExchange).status()).toBe(200);
+  await expect(page).toHaveURL(homePath);
+  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
+  await expect(page.locator('.uinfo b')).toHaveText('本地项目成员');
+  await expect.poll(()=>readPaths).toEqual(['/',homePath,homePath,'/',homePath]);
+  expect(authorizationHeaders[3]).toMatch(/^Bearer /);
+  expect(authorizationHeaders[4]).toBe(authorizationHeaders[3]);
+  expect(await page.evaluate(()=>({local:Object.keys(localStorage),session:Object.keys(sessionStorage)}))).toEqual({local:[],session:[]});
 });
 
 test('dependency failure remains visibly distinguishable from readiness',async({page})=>{
@@ -341,7 +402,7 @@ test('a stalled readiness request becomes a readable timeout before the next pol
   }finally{releaseRequest()}
 });
 
-test('unavailable actions use the exact source toast and remain transient',async({page,context})=>{
+test('still-unavailable template action uses the exact source toast and remains transient',async({page,context})=>{
   await page.goto('/');
   await expect(page.getByTestId('auth-status')).toHaveText('需要登录');
   const reference=await openReference(context,1920,1080);
@@ -357,10 +418,11 @@ test('unavailable actions use the exact source toast and remain transient',async
 
   await page.clock.install({time:new Date('2026-09-10T12:00:00Z')});
   await page.clock.pauseAt(new Date('2026-09-10T12:00:01Z'));
-  await page.locator('#globalSearch').click();
-  await referenceToast.evaluate(el=>{el.textContent='搜索功能尚未开放';el.classList.add('show')});
+  const topnav=page.getByRole('navigation',{name:'主导航',exact:true});
+  await topnav.getByRole('button',{name:/^⌘\s*模板中心$/}).click();
+  await referenceToast.evaluate(el=>{el.textContent='此功能尚未开放';el.classList.add('show')});
   await expect(toast).toHaveClass(/\bshow\b/);
-  await expect(toast).toHaveText('搜索功能尚未开放');
+  await expect(toast).toHaveText('此功能尚未开放');
   await expect(toast).toHaveCSS('opacity','1');
   await expect(referenceToast).toHaveCSS('opacity','1');
   expect(await toastIsRendered(page)).toBe(true);
@@ -385,6 +447,12 @@ test('unavailable actions use the exact source toast and remain transient',async
   await expect(toast).toHaveCSS('opacity','0');
   await expect(referenceToast).toHaveCSS('opacity','0');
   expect(await shellContract(page)).toEqual(await shellContract(reference));
+  for(const action of [/^✓\s*审校管理$/,/^▥\s*数据分析$/]){
+    await topnav.getByRole('button',{name:action}).click();
+    await expect(toast).toHaveText('此功能尚未开放');
+    await page.clock.fastForward(1800);
+    await expect(toast).toHaveClass('toast');
+  }
   await reference.close();
 });
 

@@ -1,0 +1,1073 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/discovery.schema.json",
+  "title": "工作区发现契约",
+  "$defs": {
+    "Filters": {
+      "additionalProperties": false,
+      "properties": {
+        "tab": {
+          "default": "recent",
+          "enum": [
+            "recent",
+            "created",
+            "participating",
+            "favorites"
+          ],
+          "title": "Tab",
+          "type": "string"
+        },
+        "collection": {
+          "default": "all",
+          "enum": [
+            "all",
+            "todo",
+            "references"
+          ],
+          "title": "Collection",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "document",
+                "knowledge",
+                "reference"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "technical",
+                "proposal",
+                "report",
+                "manual",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Type"
+        },
+        "lifecycle": {
+          "anyOf": [
+            {
+              "enum": [
+                "DRAFT",
+                "IN_REVIEW",
+                "APPROVED",
+                "ARCHIVED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lifecycle"
+        },
+        "visibility": {
+          "default": "visible",
+          "enum": [
+            "visible",
+            "recycled"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        }
+      },
+      "title": "Filters",
+      "type": "object"
+    },
+    "SearchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "tab": {
+          "default": "recent",
+          "enum": [
+            "recent",
+            "created",
+            "participating",
+            "favorites"
+          ],
+          "title": "Tab",
+          "type": "string"
+        },
+        "collection": {
+          "default": "all",
+          "enum": [
+            "all",
+            "todo",
+            "references"
+          ],
+          "title": "Collection",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "document",
+                "knowledge",
+                "reference"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "technical",
+                "proposal",
+                "report",
+                "manual",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Type"
+        },
+        "lifecycle": {
+          "anyOf": [
+            {
+              "enum": [
+                "DRAFT",
+                "IN_REVIEW",
+                "APPROVED",
+                "ARCHIVED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lifecycle"
+        },
+        "visibility": {
+          "default": "visible",
+          "enum": [
+            "visible",
+            "recycled"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "query": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "SearchRequest",
+      "type": "object"
+    },
+    "FavoriteCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "favorite": {
+          "title": "Favorite",
+          "type": "boolean"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "favorite",
+        "expected_revision"
+      ],
+      "title": "FavoriteCommand",
+      "type": "object"
+    },
+    "RestoreCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "policy_version": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Policy Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "policy_version"
+      ],
+      "title": "RestoreCommand",
+      "type": "object"
+    },
+    "Context": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "format": "uuid",
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "policy_epoch": {
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Policy Epoch",
+          "type": "array"
+        }
+      },
+      "required": [
+        "actor_id",
+        "workspace_id",
+        "policy_epoch"
+      ],
+      "title": "Context",
+      "type": "object"
+    },
+    "Item": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "knowledge",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "technical",
+                "proposal",
+                "report",
+                "manual",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document Type"
+        },
+        "lifecycle": {
+          "enum": [
+            "DRAFT",
+            "IN_REVIEW",
+            "APPROVED",
+            "ARCHIVED"
+          ],
+          "title": "Lifecycle",
+          "type": "string"
+        },
+        "visibility": {
+          "enum": [
+            "visible",
+            "recycled"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "created_by": {
+          "format": "uuid",
+          "title": "Created By",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version_label": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Version Label"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "resource_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Resource Epoch",
+          "type": "integer"
+        },
+        "favorite": {
+          "title": "Favorite",
+          "type": "boolean"
+        },
+        "favorite_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Favorite Revision",
+          "type": "integer"
+        },
+        "participating": {
+          "title": "Participating",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "workspace_id",
+        "title",
+        "kind",
+        "document_type",
+        "lifecycle",
+        "visibility",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "version_label",
+        "revision",
+        "resource_epoch",
+        "favorite",
+        "favorite_revision",
+        "participating"
+      ],
+      "title": "Item",
+      "type": "object"
+    },
+    "Page": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "maxItems": 50,
+          "title": "Items",
+          "type": "array"
+        },
+        "total_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Total Count",
+          "type": "integer"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        },
+        "context": {
+          "$ref": "#/$defs/Context"
+        },
+        "storage": {
+          "$ref": "#/$defs/Storage"
+        }
+      },
+      "required": [
+        "items",
+        "total_count",
+        "next_cursor",
+        "context",
+        "storage"
+      ],
+      "title": "Page",
+      "type": "object"
+    },
+    "Storage": {
+      "additionalProperties": false,
+      "properties": {
+        "metadata_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Metadata Bytes",
+          "type": "integer"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "scope": {
+          "const": "authorized_filtered_record_metadata",
+          "title": "Scope",
+          "type": "string"
+        },
+        "definition": {
+          "const": "pg_column_size(discovery_record)+pg_column_size(access_resource.title)",
+          "title": "Definition",
+          "type": "string"
+        },
+        "visibility": {
+          "enum": [
+            "visible",
+            "recycled"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "attachment_bytes": {
+          "default": null,
+          "title": "Attachment Bytes",
+          "type": "null"
+        },
+        "quota_bytes": {
+          "default": null,
+          "title": "Quota Bytes",
+          "type": "null"
+        }
+      },
+      "required": [
+        "metadata_bytes",
+        "measured_at",
+        "scope",
+        "definition",
+        "visibility"
+      ],
+      "title": "Storage",
+      "type": "object"
+    },
+    "ListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Page"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "ListResponse",
+      "type": "object"
+    },
+    "FunctionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "documents",
+            "favorites",
+            "references",
+            "recycle",
+            "project"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "route": {
+          "enum": [
+            "documents",
+            "favorites",
+            "references",
+            "recycle",
+            "project"
+          ],
+          "title": "Route",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "route",
+        "workspace_id"
+      ],
+      "title": "FunctionResult",
+      "type": "object"
+    },
+    "SearchPage": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "maxItems": 50,
+          "title": "Items",
+          "type": "array"
+        },
+        "total_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Total Count",
+          "type": "integer"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        },
+        "context": {
+          "$ref": "#/$defs/Context"
+        },
+        "storage": {
+          "$ref": "#/$defs/Storage"
+        },
+        "functions": {
+          "items": {
+            "$ref": "#/$defs/FunctionResult"
+          },
+          "maxItems": 5,
+          "title": "Functions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "total_count",
+        "next_cursor",
+        "context",
+        "storage",
+        "functions"
+      ],
+      "title": "SearchPage",
+      "type": "object"
+    },
+    "SearchResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SearchPage"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "SearchResponse",
+      "type": "object"
+    },
+    "Actions": {
+      "additionalProperties": false,
+      "properties": {
+        "favorite": {
+          "title": "Favorite",
+          "type": "boolean"
+        },
+        "restore": {
+          "title": "Restore",
+          "type": "boolean"
+        },
+        "restore_policy_version": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Restore Policy Version"
+        }
+      },
+      "required": [
+        "favorite",
+        "restore",
+        "restore_policy_version"
+      ],
+      "title": "Actions",
+      "type": "object"
+    },
+    "Detail": {
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/Item"
+        },
+        "context": {
+          "$ref": "#/$defs/Context"
+        },
+        "resource_context": {
+          "$ref": "#/$defs/Context"
+        },
+        "actions": {
+          "$ref": "#/$defs/Actions"
+        },
+        "content_state": {
+          "const": "metadata_only",
+          "title": "Content State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "context",
+        "resource_context",
+        "actions",
+        "content_state"
+      ],
+      "title": "Detail",
+      "type": "object"
+    },
+    "DetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Detail"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DetailResponse",
+      "type": "object"
+    },
+    "FuturePanel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "review",
+            "ai_words",
+            "quality",
+            "templates",
+            "recommendations",
+            "creation"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value",
+          "type": "null"
+        },
+        "state": {
+          "enum": [
+            "not_collected",
+            "not_evaluated",
+            "unavailable"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "owner": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Owner",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "reason",
+        "owner"
+      ],
+      "title": "FuturePanel",
+      "type": "object"
+    },
+    "Summary": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/Context"
+        },
+        "workspace": {
+          "$ref": "#/$defs/Workspace"
+        },
+        "total_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Total Count",
+          "type": "integer"
+        },
+        "storage": {
+          "$ref": "#/$defs/Storage"
+        },
+        "week_new_documents": {
+          "$ref": "#/$defs/WeekMetric"
+        },
+        "todo_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Todo Count",
+          "type": "integer"
+        },
+        "last_activity_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Activity At"
+        },
+        "future_panels": {
+          "items": {
+            "$ref": "#/$defs/FuturePanel"
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "title": "Future Panels",
+          "type": "array"
+        }
+      },
+      "required": [
+        "context",
+        "workspace",
+        "total_count",
+        "storage",
+        "week_new_documents",
+        "todo_count",
+        "last_activity_at",
+        "future_panels"
+      ],
+      "title": "Summary",
+      "type": "object"
+    },
+    "WeekMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "window_start": {
+          "format": "date-time",
+          "title": "Window Start",
+          "type": "string"
+        },
+        "window_end": {
+          "format": "date-time",
+          "title": "Window End",
+          "type": "string"
+        },
+        "definition": {
+          "const": "authorized_filtered_documents_created_since_utc_monday",
+          "title": "Definition",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "window_start",
+        "window_end",
+        "definition"
+      ],
+      "title": "WeekMetric",
+      "type": "object"
+    },
+    "Workspace": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 512,
+          "title": "Name",
+          "type": "string"
+        },
+        "slug": {
+          "maxLength": 128,
+          "title": "Slug",
+          "type": "string"
+        },
+        "project_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "customer_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Customer Id",
+          "type": "string"
+        },
+        "product_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "department": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\x00]+$",
+          "title": "Department",
+          "type": "string"
+        },
+        "classification": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Classification",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug",
+        "project_id",
+        "customer_id",
+        "product_id",
+        "department",
+        "classification"
+      ],
+      "title": "Workspace",
+      "type": "object"
+    },
+    "SummaryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Summary"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "SummaryResponse",
+      "type": "object"
+    },
+    "Receipt": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "format": "uuid",
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "favorite.set",
+            "restore_visibility"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "resource_id": {
+          "format": "uuid",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "replayed": {
+          "title": "Replayed",
+          "type": "boolean"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/Context"
+        },
+        "current": {
+          "$ref": "#/$defs/Item"
+        }
+      },
+      "required": [
+        "operation_id",
+        "action",
+        "resource_id",
+        "replayed",
+        "occurred_at",
+        "context",
+        "current"
+      ],
+      "title": "Receipt",
+      "type": "object"
+    },
+    "CommandResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Receipt"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandResponse",
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ListResponse"
+    },
+    {
+      "$ref": "#/$defs/SearchResponse"
+    },
+    {
+      "$ref": "#/$defs/DetailResponse"
+    },
+    {
+      "$ref": "#/$defs/SummaryResponse"
+    },
+    {
+      "$ref": "#/$defs/CommandResponse"
+    }
+  ]
+}

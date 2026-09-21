@@ -2,6 +2,18 @@ import {afterEach,beforeEach,expect,test,vi} from 'vitest';
 
 const values = new Map<string,string>();
 const assign = vi.fn();
+const workspacePath='/workspaces/22222222-2222-4222-8222-222222222222';
+const recordId='11111111-1111-4111-8111-111111111111';
+const unsafeReturnPaths=[
+  'https://evil.invalid','//evil.invalid','javascript:alert(1)',
+  '/admin/members?access_token=secret','/admin/members#fragment','/workspaces/../admin',
+  '/auth/callback',`${workspacePath}/unknown`,`${workspacePath}/home/`,
+  '/workspaces/not-a-uuid/documents',`${workspacePath}/records/not-a-uuid`,
+  `${workspacePath}/resources/not-a-uuid`,`${workspacePath}/records/${recordId}/extra`,
+  `${workspacePath}/search?q=private-search-term`,`${workspacePath}/records/${recordId}#fragment`,
+  `${workspacePath}/records/%31${recordId.slice(1)}`,`${workspacePath}/records/../home`,
+  `${workspacePath}/home\n`,`${workspacePath}/home\r`,`${workspacePath}/home\u2028`,`${workspacePath}/home\u2029`,
+];
 beforeEach(()=>{
   vi.resetModules(); vi.clearAllMocks(); values.clear();
   vi.stubGlobal('window',{location:{origin:'http://localhost:18080',search:'',assign}});
@@ -45,22 +57,50 @@ test('wrong state clears transaction and never exchanges a code',async()=>{
   expect(fetch).not.toHaveBeenCalled(); expect(values.size).toBe(0);
 });
 
-test('a validated internal deep link survives the one-shot login transaction',async()=>{
-  const destination='/workspaces/22222222-2222-4222-8222-222222222222/resources/11111111-1111-4111-8111-111111111111';
+test.each([
+  '/','/admin/members',
+  ...['home','documents','favorites','references','recycle','search','project','projects','account'].map(page=>`${workspacePath}/${page}`),
+  `${workspacePath}/resources/${recordId}`,`${workspacePath}/records/${recordId}`,
+  '/workspaces/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/records/BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+])('validated return path %s survives the one-shot login transaction',async destination=>{
   window.location.pathname=destination;
   const auth=await callbackTransaction();
+  expect(JSON.parse(values.get('oidc.tx')!).returnTo).toBe(destination);
   vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({access_token:'memory-token'})));
   await expect(auth.finishLogin()).resolves.toBe(destination);
   expect(values.size).toBe(0);
   expect(history.replaceState).toHaveBeenCalledWith({},'', '/');
 });
 
-test.each(['https://evil.invalid','//evil.invalid','/admin/members?access_token=secret','/workspaces/../admin','javascript:alert(1)'])('unsafe return path %s rejects before exchange',async returnTo=>{
+test.each(unsafeReturnPaths)('unsafe return path %s rejects before exchange',async returnTo=>{
   const auth=await import('./oidc');
   values.set('oidc.tx',JSON.stringify({state:'expected',verifier:'verifier',returnTo}));
   window.location.search='?code=example&state=expected';
   await expect(auth.finishLogin()).rejects.toThrow('登录返回路径无效');
   expect(fetch).not.toHaveBeenCalled();expect(values.size).toBe(0);
+});
+
+test.each(unsafeReturnPaths)('login from unsafe pathname %s stores only the root fallback',async pathname=>{
+  window.location.pathname=pathname;
+  const auth=await import('./oidc');
+  await auth.beginLogin();
+  expect(JSON.parse(values.get('oidc.tx')!).returnTo).toBe('/');
+});
+
+test('login preserves the search page without storing query text or URL fragments',async()=>{
+  const destination=`${workspacePath}/search`;
+  window.location.pathname=destination;
+  window.location.search='?q=private-search-term';
+  window.location.hash='#private-fragment';
+  const auth=await import('./oidc');
+  await auth.beginLogin();
+
+  const stored=values.get('oidc.tx')!;
+  expect(JSON.parse(stored)).toEqual({state:expect.any(String),verifier:expect.any(String),returnTo:destination});
+  expect(stored).not.toContain('private-search-term');
+  expect(stored).not.toContain('private-fragment');
+  expect(String(assign.mock.calls[0][0])).not.toContain('private-search-term');
+  expect(String(assign.mock.calls[0][0])).not.toContain('private-fragment');
 });
 
 test.each([

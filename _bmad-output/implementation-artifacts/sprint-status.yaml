@@ -80,7 +80,7 @@ development_status:
   epic-1: in-progress
   1-1-runnable-workspace: done
   1-2-current-access: done
-  1-3-workspace-discovery: backlog
+  1-3-workspace-discovery: done # software/static-only; actual environment verification cancelled by user, not verified
   1-4-durable-submission: backlog
   1-5-fenced-recovery: backlog
   1-6-task-observation: backlog

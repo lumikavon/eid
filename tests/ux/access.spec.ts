@@ -161,6 +161,12 @@ async function login(page:Page,role:string,path=`/workspaces/${workspaceA}/home`
  await expect(page.getByTestId('auth-status')).toHaveText(path==='/'?'已安全登录':/已安全登录|工作区访问被拒绝/);
  return request.headers().authorization;
 }
+async function openAccount(page:Page,workspace:string){
+ await page.getByRole('button',{name:'账户与会话',exact:true}).click();
+ await expect(page).toHaveURL(`/workspaces/${workspace}/account`);
+ await expect(page.getByLabel('选择工作区')).toBeVisible();
+ await expect(page.getByLabel('选择工作区')).toBeEnabled();
+}
 async function freshRestorationSession(page:Page,workspace:string){
  requireFixtureLock();
  const browser=page.context().browser();expect(browser,'Fixture restoration requires an independent browser context').toBeTruthy();
@@ -310,6 +316,9 @@ const operations:Record<string,string>={author:'document:edit',expert:'document:
 
 test('workspace pages render independently and retain a current project absent from the page',async({page})=>{
  await login(page,'author',`/workspaces/${remainingWorkspace}/home`);
+ await page.getByRole('button',{name:'选择项目',exact:true}).click();
+ await expect(page).toHaveURL(`/workspaces/${remainingWorkspace}/account`);
+ await expect(page.getByLabel('选择工作区')).toBeEnabled();
  let reads=0;
  await page.route('**/api/v1/access/workspaces*',async route=>{
   const url=new URL(route.request().url());
@@ -335,17 +344,20 @@ test('workspace pages render independently and retain a current project absent f
  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
 });
 
-test('history navigation opens and closes member management without retaining an editor',async({page})=>{
- await login(page,'system_admin','/');
- await page.evaluate(()=>{history.pushState({},'','/admin/members');dispatchEvent(new PopStateEvent('popstate'))});
+test('account navigation opens and closes member management without retaining an editor',async({page})=>{
+ await login(page,'system_admin');
+ await openAccount(page,workspaceA);
+ await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await expect(page.getByRole('table',{name:'项目成员权限'})).toBeVisible();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  await expect(page.locator('.access-editor')).toBeVisible();
  await page.goBack();
- await expect(page).toHaveURL('/');
+ await expect(page).toHaveURL(`/workspaces/${workspaceA}/home`);
  await expect(page.locator('.access-admin')).toHaveCount(0);
  await expect(page.locator('.access-editor')).toHaveCount(0);
  await page.goForward();
+ await expect(page).toHaveURL(`/workspaces/${workspaceA}/account`);
+ await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await expect(page.getByRole('table',{name:'项目成员权限'})).toBeVisible();
  await expect(page.locator('.access-editor')).toHaveCount(0);
 });
@@ -358,7 +370,8 @@ test('invalid callback navigation with an existing session offers fresh authenti
  await expect(page.getByRole('button',{name:'重试账户加载'})).toHaveCount(0);
  await page.getByRole('button',{name:'登录工作区',exact:true}).click();
  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
- await expect(page.getByLabel('选择工作区')).toBeVisible();
+ await expect(page).toHaveURL(`/workspaces/${workspaceA}/home`);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
 });
 
 test('root project revocation discovers another real membership before the account poll',async({page,browser})=>{
@@ -370,15 +383,12 @@ test('root project revocation discovers another real membership before the accou
   const native=window.setInterval;
   window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>native(timeout===15000?()=>{}:handler,timeout,...args);
  });
- await login(author,'author','/');
- await expect(author.getByLabel('选择工作区')).toHaveValue(defaultWorkspace);
  const revoked=await mutation.put({...original,active:false});
  expect(revoked.status()).toBe(200);
- await author.getByRole('button',{name:'刷新可访问项目'}).click();
- await expect(author.getByLabel('选择工作区')).toHaveValue(remainingWorkspace);
+ await login(author,'author','/');
  await expect(author.getByTestId('auth-status')).toHaveText('已安全登录');
  await expect(author.locator('.project-card b')).toHaveText(workspaceName(remainingWorkspace));
- await expect(author).toHaveURL('/');
+ await expect(author).toHaveURL(`/workspaces/${remainingWorkspace}/home`);
 });
 
 test('development StrictMode consumes one callback and preserves the resource destination before polling',async({page})=>{
@@ -431,6 +441,7 @@ for(const [role,operation] of Object.entries(operations)){
 
 test('workspace picker changes the actual context and a later refresh retains selection',async({page})=>{
  await login(page,'author');
+ await openAccount(page,workspaceA);
  await page.getByLabel('选择工作区').selectOption(workspaceB);
  await expect(page).toHaveURL(`/workspaces/${workspaceB}/home`);
  await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 B');
@@ -447,32 +458,60 @@ test('an unauthorized resource deep link remains denied after real reauthenticat
  await expect(page.getByRole('button',{name:'返回项目首页'})).toBeVisible();
  await page.screenshot({path:'test-results/access-forbidden.png'});
  await page.getByRole('button',{name:'返回项目首页'}).click();
- await expect(page.getByLabel('选择工作区')).toBeVisible();
+ await expect(page).toHaveURL(`/workspaces/${workspaceA}/home`);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
 });
 
 test('switching context clears protected data and late responses cannot restore an old project',async({page})=>{
+ await page.clock.install();
  await login(page,'author');
+ await openAccount(page,workspaceA);
  await page.getByLabel('选择工作区').selectOption(workspaceB);
  await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 B');
+ const discovery=page.getByTestId('discovery-root');
+ const contextB=new RegExp(`^${fixtures.users.author.actor_id}:${workspaceB}:`);
+ await expect(discovery).toHaveAttribute('data-context',contextB);
+ await expect(page.getByTestId('discovery-total')).toBeVisible();
+ await expect(page.getByTestId('discovery-storage')).toContainText('字节');
+ await page.clock.pauseAt(await page.evaluate(()=>Date.now()+1000));
  let releaseA=()=>{};let releaseB=()=>{};
+ let observeA=()=>{};let observeB=()=>{};
+ const requestedA=new Promise<void>(r=>{observeA=r});const requestedB=new Promise<void>(r=>{observeB=r});
  const holdA=new Promise<void>(r=>{releaseA=r});const holdB=new Promise<void>(r=>{releaseB=r});
- await page.route(`**/api/v1/access/workspaces/${workspaceA}`,async route=>{await holdA;await route.continue()});
- await page.route(`**/api/v1/access/workspaces/${workspaceB}`,async route=>{await holdB;await route.continue()});
+ await page.route(`**/api/v1/access/workspaces/${workspaceA}`,async route=>{observeA();await holdA;await route.continue()});
+ await page.route(`**/api/v1/access/workspaces/${workspaceB}`,async route=>{observeB();await holdB;await route.continue()});
+ const expectCleared=async()=>{
+  await expect(discovery).toHaveCount(0);
+  await expect(page.getByTestId('discovery-total')).toHaveCount(0);
+  await expect(page.getByTestId('discovery-storage')).toHaveCount(0);
+  await expect(page.locator('.project-card b')).toHaveText('等待身份映射');
+  await expect(page.locator('#globalSearch')).toBeDisabled();
+ };
  try{
   await page.evaluate(id=>{history.pushState({},'',`/workspaces/${id}/home`);dispatchEvent(new PopStateEvent('popstate'))},workspaceA);
-  await expect(page.locator('.access-panel')).toHaveCount(0);
+  await requestedA;await expectCleared();
   await page.evaluate(id=>{history.pushState({},'',`/workspaces/${id}/home`);dispatchEvent(new PopStateEvent('popstate'))},workspaceB);
-  await expect(page.locator('.access-panel')).toHaveCount(0);
-  await expect(page.locator('.project-card b')).not.toContainText('本地权限验收项目');
+  await requestedB;await expectCleared();
   releaseB();await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 B');
-  releaseA();await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 B');
+  await expect(discovery).toHaveAttribute('data-context',contextB);
+  // Drain React Query's zero-delay notifications without reaching A's timeout or a poll.
+  await expect.poll(async()=>{await page.clock.runFor(1);return page.getByTestId('discovery-total').isVisible()}).toBe(true);
+  await expect(page.getByTestId('discovery-total')).toBeVisible();
+  const lateA=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v1/access/workspaces/${workspaceA}`);
+  releaseA();const lateResponse=await lateA;
+  expect(lateResponse.status()).toBe(200);expect(await lateResponse.finished()).toBeNull();
+  await page.clock.runFor(1);
+  await expect(page).toHaveURL(`/workspaces/${workspaceB}/home`);
+  await expect(discovery).toHaveAttribute('data-context',contextB);
+  await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 B');
  }finally{releaseA();releaseB()}
 });
 
 test('permission change audit is durable and next use clears the revoked workspace',async({page,browser})=>{
  test.setTimeout(2*guardTimeout+60000);
  const adminBearer=await login(page,'system_admin');
- await page.getByLabel('选择工作区').selectOption(workspaceA);
+ await openAccount(page,workspaceA);
+ await expect(page.getByLabel('选择工作区')).toHaveValue(workspaceA);
  await expect(page.locator('.project-card b')).toHaveText('本地权限验收项目 A');
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await expect(page.getByRole('table',{name:'项目成员权限'})).toBeVisible();
@@ -484,7 +523,8 @@ test('permission change audit is durable and next use clears the revoked workspa
   window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>native(timeout===15000?()=>{}:handler,timeout,...args);
  });
  const authorBearer=await login(author,'author');
- await author.getByLabel('选择工作区').selectOption(workspaceA);
+ await openAccount(author,workspaceA);
+ await expect(author.getByLabel('选择工作区')).toHaveValue(workspaceA);
  await expect(author.locator('.project-card b')).toHaveText('本地权限验收项目 A');
  const original=await memberBody(page,adminBearer);
  await prepareRestore(page,adminBearer,original,workspaceA,()=>authorContext.close());
@@ -537,7 +577,8 @@ test('permission change audit is durable and next use clears the revoked workspa
 
 test('membership conflict discards the stale editor and the next save uses a fresh epoch',async({page})=>{
  const bearer=await login(page,'system_admin');
- await page.getByLabel('选择工作区').selectOption(workspaceA);
+ await openAccount(page,workspaceA);
+ await expect(page.getByLabel('选择工作区')).toHaveValue(workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  const row=page.getByRole('row').filter({hasText:'本地验收 · author'});
  await row.getByRole('button',{name:'编辑权限'}).click();
@@ -562,6 +603,7 @@ test('membership conflict discards the stale editor and the next save uses a fre
 
 test('empty membership response has a persistent explanation',async({page})=>{
  await login(page,'system_admin');
+ await openAccount(page,workspaceA);
  await page.route('**/api/v1/access/workspaces/*/members',async route=>{
   const response=await route.fetch();const body=await response.json();
   body.data.members=[];body.data.next_cursor=null;
@@ -584,6 +626,7 @@ test('history navigation during member save preserves its original audit and can
  const bearer=await login(page,'system_admin',`/workspaces/${workspaceA}/home`);
  const original=await memberBody(page,bearer);
  await prepareRestore(page,bearer,original);
+ await openAccount(page,workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  const clearance=original.clearance===1?2:1;
@@ -606,7 +649,7 @@ test('history navigation during member save preserves its original audit and can
  expect(audit.trace_id).toMatch(/^[0-9a-f]{32}$/);
  expect((await memberBody(page,bearer)).clearance).toBe(clearance);
  await expect(page).toHaveURL(`/workspaces/${workspaceB}/home`);
- await expect(page.getByLabel('选择工作区')).toHaveValue(workspaceB);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
  await expect(page.locator('.access-editor')).toHaveCount(0);
  await expect(page.getByRole('status').filter({hasText:'权限已保存'})).toHaveCount(0);
  await page.unrouteAll({behavior:'wait'});
@@ -617,6 +660,7 @@ test('invalid member validity is an input error and preserves the editable form'
  const original=await memberBody(page,bearer);
  // Even a validation regression must retain the original policy and block later fixture tests.
  await prepareRestore(page,bearer,original);
+ await openAccount(page,workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  await page.getByLabel('生效时间（含时区）',{exact:true}).fill('2026-09-14T00:00:00');
@@ -631,6 +675,7 @@ test('member editor persists authority fields and complete scope values with an 
  const bearer=await login(page,'system_admin',`/workspaces/${workspaceA}/home`);
  const original=await memberBody(page,bearer);
  await prepareRestore(page,bearer,original);
+ await openAccount(page,workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  expect(original.roles).toEqual(['author']);
@@ -669,7 +714,7 @@ test('member editor persists authority fields and complete scope values with an 
 });
 
 test('member pagination follows the server cursor and supports returning to the first page',async({page})=>{
- await login(page,'system_admin');await page.getByLabel('选择工作区').selectOption(workspaceA);
+ await login(page,'system_admin');await openAccount(page,workspaceA);await expect(page.getByLabel('选择工作区')).toHaveValue(workspaceA);
  let first='';
  await page.route('**/api/v1/access/workspaces/*/members*',async route=>{
   const response=await route.fetch();const body=await response.json();
@@ -701,16 +746,21 @@ test('malformed resource address stops instead of retrying an invalid request',a
 });
 
 test('a default workspace revoked between reads resolves another current project once',async({page})=>{
- let reads=0;
+ await page.addInitScript(()=>{const native=window.setInterval;window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>native(timeout===15000?()=>{}:handler,timeout,...args)});
+ const readPaths:string[]=[];
  await page.route('**/api/v1/me',async route=>{
-  const response=await route.fetch();const body=await response.json();reads++;
-  body.data.workspace_id=reads===1?defaultWorkspace:remainingWorkspace;
+  readPaths.push(new URL(page.url()).pathname);
+  const response=await route.fetch();const body=await response.json();
+  body.data.workspace_id=readPaths.length===1?defaultWorkspace:remainingWorkspace;
   await route.fulfill({response,json:body});
  });
  await page.route(`**/api/v1/access/workspaces/${defaultWorkspace}`,route=>route.fulfill({status:403,json:{error:{message:'denied'}}}));
  await login(page,'author','/');
+ await expect(page).toHaveURL(`/workspaces/${remainingWorkspace}/home`);
+ // Two root reads resolve the race; entering the explicit project reloads its account.
+ await expect.poll(()=>readPaths).toEqual(['/','/',`/workspaces/${remainingWorkspace}/home`]);
  await expect(page.locator('.project-card b')).toHaveText(workspaceName(remainingWorkspace));
- expect(reads).toBe(2);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
 });
 
 test('uppercase UUID deep links resolve to the same authorized resource',async({page})=>{
@@ -721,30 +771,35 @@ test('uppercase UUID deep links resolve to the same authorized resource',async({
 });
 
 test('two default project races remain retryable without signing out',async({page})=>{
- await page.clock.install();
- await login(page,'author','/');
- await expect(page.getByRole('button',{name:'刷新可访问项目'})).toBeEnabled();
- let reads=0;let denying=true;
+ await page.addInitScript(()=>{const native=window.setInterval;window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>native(timeout===15000?()=>{}:handler,timeout,...args)});
+ const bearer=await login(page,'author',`/workspaces/${defaultWorkspace}/home`);
+ const readPaths:string[]=[];const authorizations:string[]=[];let denying=true;
  await page.route('**/api/v1/me',async route=>{
-  const response=await route.fetch();const body=await response.json();reads++;
-  if(denying)body.data.workspace_id=reads===1?defaultWorkspace:remainingWorkspace;
+  readPaths.push(new URL(page.url()).pathname);authorizations.push(route.request().headers().authorization);
+  const response=await route.fetch();const body=await response.json();
+  if(denying)body.data.workspace_id=readPaths.length===1?defaultWorkspace:remainingWorkspace;
   await route.fulfill({response,json:body});
  });
  await page.route('**/api/v1/access/workspaces/*',route=>denying
   ?route.fulfill({status:403,json:{error:{message:'denied'}}}):route.continue());
- await page.clock.fastForward(15000);
+ // Keep the document (and its module-only token) while re-entering default selection.
+ await page.evaluate(()=>{history.pushState({},'','/');dispatchEvent(new PopStateEvent('popstate'))});
  await expect(page.getByTestId('auth-status')).toHaveText('账户服务暂时不可用');
- await expect(page.locator('.access-panel')).toHaveCount(0);
- expect(reads).toBe(2);
+ await expect(page.getByTestId('discovery-root')).toHaveCount(0);
+ expect(readPaths).toEqual(['/','/']);
+ expect(authorizations).toEqual([bearer,bearer]);
  denying=false;
  await page.getByRole('button',{name:'重试账户加载'}).click();
+ await expect(page).toHaveURL(/\/workspaces\/[0-9a-f-]{36}\/home$/);
+ await expect.poll(()=>readPaths).toEqual(['/','/','/',new URL(page.url()).pathname]);
  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
- await expect(page.getByLabel('选择工作区')).toBeVisible();
- expect(reads).toBe(3);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
+ expect(authorizations).toEqual([bearer,bearer,bearer,bearer]);
 });
 
 test('save denial clears the member table before the delayed account refresh completes',async({page})=>{
  await login(page,'system_admin',`/workspaces/${workspaceA}/home`);
+ await openAccount(page,workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  let release=()=>{};const hold=new Promise<void>(resolve=>{release=resolve});let reads=0;
@@ -766,6 +821,7 @@ test('account denial discards the saved audit receipt before subsequent navigati
  await expect(page).toHaveURL(`/workspaces/${workspaceA}/home`);
  const original=await memberBody(page,bearer);
  await prepareRestore(page,bearer,original);
+ await openAccount(page,workspaceA);
  await page.getByRole('button',{name:'成员与权限',exact:true}).click();
  await page.getByRole('row').filter({hasText:'本地验收 · author'}).getByRole('button',{name:'编辑权限'}).click();
  await page.getByRole('button',{name:'保存权限',exact:true}).click();
@@ -778,7 +834,8 @@ test('account denial discards the saved audit receipt before subsequent navigati
  await page.unroute('**/api/v1/me');
  await page.evaluate(id=>{history.pushState({},'',`/workspaces/${id}/home`);dispatchEvent(new PopStateEvent('popstate'))},workspaceB);
  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
- await expect(page.getByLabel('选择工作区')).toHaveValue(workspaceB);
+ await expect(page).toHaveURL(`/workspaces/${workspaceB}/home`);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
  await expect(page.getByRole('status').filter({hasText:'权限已保存，审计编号'})).toHaveCount(0);
 });
 
@@ -801,7 +858,7 @@ test('a cached resource denied on refetch clears its display without an automati
  await page.getByRole('button',{name:'重新读取权限'}).click();
  await expect.poll(()=>deniedRequests).toBe(2);
  await page.getByRole('button',{name:'返回项目首页'}).click();
- await expect(page.getByLabel('选择工作区')).toBeVisible();
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
 });
 
 test('unsupported route suffixes never request protected data',async({page})=>{
@@ -817,6 +874,7 @@ test('unsupported route suffixes never request protected data',async({page})=>{
 
 test('scope editor retains commas and individual multiline values when editing',async({page})=>{
  await login(page,'system_admin');
+ await openAccount(page,workspaceA);
  await page.route('**/api/v1/access/workspaces/*/members',async route=>{
   const response=await route.fetch();const body=await response.json();
   body.data.members[0].customer_scope=['customer-a,inc','line one\nline two'];
@@ -844,7 +902,8 @@ test('a role without member management can return from a denied admin deep link'
  await login(page,'author','/admin/members');
  await expect(page.getByRole('alert')).toContainText('当前权限不允许此访问');
  await page.getByRole('button',{name:'返回项目首页'}).click();
- await expect(page.getByLabel('选择工作区')).toBeVisible();
+ await expect(page).toHaveURL(`/workspaces/${workspaceA}/home`);
+ await expect(page.getByTestId('discovery-root')).toHaveAttribute('data-view','home');
  await expect(page.getByRole('alert')).toHaveCount(0);
  await expect(page.getByTestId('auth-status')).toHaveText('已安全登录');
 });
@@ -855,6 +914,7 @@ test('a fresh project list replaces an outdated role epoch without waiting for a
  restoreAfterTest=()=>context.close();
  await author.addInitScript(()=>{const native=window.setInterval;window.setInterval=(handler:TimerHandler,timeout?:number,...args:unknown[])=>native(timeout===15000?()=>{}:handler,timeout,...args)});
  await login(author,'author',`/workspaces/${workspaceA}/home`);
+ await openAccount(author,workspaceA);
  await expect(author.locator('.access-panel')).toContainText('作者');
  const mutation=await prepareRestore(page,bearer,original,workspaceA,()=>context.close());
  const changed=await mutation.put({...original,roles:['expert']});

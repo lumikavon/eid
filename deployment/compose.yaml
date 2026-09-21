@@ -7,7 +7,7 @@ x-runtime-environment: &runtime
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0006_api_write_only
+  EID_REQUIRED_SCHEMA_REVISION: 0007_workspace_discovery
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
@@ -81,6 +81,7 @@ services:
       EID_KEYCLOAK_ADMIN_URL: http://keycloak:8080
       EID_KEYCLOAK_MONITOR_CLIENT_ID: eid-readiness-monitor
       EID_KEYCLOAK_MONITOR_CLIENT_SECRET: local-keycloak-readiness-monitor-only
+      EID_DISCOVERY_POLICY_ENVIRONMENT: isolated_development
     depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_healthy}, redis: {condition: service_healthy}, seaweedfs: {condition: service_started}, keycloak: {condition: service_healthy}}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]

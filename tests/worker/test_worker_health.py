@@ -34,7 +34,7 @@ class Connection:
     def __init__(
         self,
         marker: str,
-        revision: str | list[tuple[str]] = "0006_api_write_only",
+        revision: str | list[tuple[str]] = "0007_workspace_discovery",
         user: str = "eid_worker",
         database: str = "eid_local_dev",
     ):
@@ -90,7 +90,7 @@ def test_worker_dependency_gate_accepts_exact_marker_and_revision(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0006_api_write_only",
+            "0007_workspace_discovery",
         ),
     )
 
@@ -137,7 +137,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     configure_non_database_dependencies(monkeypatch)
     database = {
         "marker": "eid-local-dev-v1",
-        "revision": "0006_api_write_only",
+        "revision": "0007_workspace_discovery",
     }
     monkeypatch.setattr(
         worker_app.psycopg,
@@ -148,7 +148,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
     database["revision"] = "0000_stale"
     assert worker_app.dependency_readiness(None) == {"status": "unavailable"}
-    database["revision"] = "0006_api_write_only"
+    database["revision"] = "0007_workspace_discovery"
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
 
 
@@ -168,7 +168,7 @@ def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
 @pytest.mark.parametrize(
     ("marker", "revision", "message"),
     [
-        ("foreign-environment", "0006_api_write_only", "environment marker"),
+        ("foreign-environment", "0007_workspace_discovery", "environment marker"),
         ("eid-local-dev-v1", "0000_stale", "schema revision"),
     ],
 )
@@ -204,7 +204,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     configure_non_database_dependencies(monkeypatch)
     connection = Connection(
         "eid-local-dev-v1",
-        "0006_api_write_only",
+        "0007_workspace_discovery",
         user=user,
         database=database,
     )
@@ -225,7 +225,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     [
         [],
         [("0000_stale",)],
-        [("0006_api_write_only",), ("0002_divergent",)],
+        [("0007_workspace_discovery",), ("0002_divergent",)],
     ],
 )
 def test_worker_dependency_gate_requires_exactly_one_expected_revision(
@@ -250,7 +250,7 @@ def test_worker_dependency_gate_rejects_redis_failure(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0006_api_write_only",
+            "0007_workspace_discovery",
         ),
     )
     monkeypatch.setattr(
@@ -270,7 +270,7 @@ def test_worker_dependency_gate_rejects_s3_client_error(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0006_api_write_only",
+            "0007_workspace_discovery",
         ),
     )
 
@@ -296,7 +296,7 @@ def test_worker_dependency_clients_close_after_success(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0006_api_write_only",
+            "0007_workspace_discovery",
         ),
     )
 
