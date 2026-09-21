@@ -65,7 +65,7 @@ def main():
     client.head_bucket(Bucket=EXPECTED["bucket"])
     # 创建后重新运行完整守卫，只有最终状态全部匹配时才报告初始化成功。
     verify_migration_target(os.environ.get("EID_MIGRATION_DATABASE_URL", ""))
-    print("专用本地对象存储已就绪")
+    print("所选隔离开发环境的对象存储已就绪")
 
 
 if __name__ == "__main__":

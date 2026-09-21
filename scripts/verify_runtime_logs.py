@@ -1,4 +1,4 @@
-"""Read owned local service logs and report only redacted match counts."""
+"""Read owned service logs and report only redacted match counts."""
 
 import json
 import re
@@ -6,7 +6,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from scripts.verify_local_environment import ownership, verify_runtime_images
+from scripts.verify_local_environment import ownership, remote_config, verify_runtime_images
 
 
 PROJECT = "eid-local"
@@ -40,6 +40,8 @@ LOCAL_CREDENTIALS = {
 
 
 def _owned_service_containers(owner_nonce: str) -> dict[str, str]:
+    if remote_config() is not None:
+        raise RuntimeError("Remote environment cannot inspect local Docker containers")
     try:
         output = subprocess.check_output(
             [
@@ -83,15 +85,24 @@ def _owned_service_containers(owner_nonce: str) -> dict[str, str]:
 
 
 def scan_runtime_logs() -> dict:
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        image_check = executor.submit(verify_runtime_images)
-        state = ownership(create=False)
-        containers = _owned_service_containers(state["nonce"])
-        runtime_images = image_check.result()
+    config = remote_config()
+    remote_runtime = None
+    if config is not None:
+        from scripts.remote_service_operations import RemoteRuntime
+
+        runtime_images = verify_runtime_images()
+        remote_runtime = RemoteRuntime(config, runtime_images)
+        containers = remote_runtime.container_ids
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            image_check = executor.submit(verify_runtime_images)
+            state = ownership(create=False)
+            containers = _owned_service_containers(state["nonce"])
+            runtime_images = image_check.result()
     recorded_services = runtime_images["services"]
     if any(
         recorded_services[service]["container_id"] != containers[service]
-        for service in ("api", "worker", "web")
+        for service in (EXPECTED_SERVICES if config is not None else ("api", "worker", "web"))
     ):
         raise RuntimeError("Runtime image manifest does not match scanned containers")
     credential_values = sorted(set(LOCAL_CREDENTIALS.values()), key=lambda value: (-len(value), value))
@@ -108,36 +119,33 @@ def scan_runtime_logs() -> dict:
     results = {}
     cutoff = datetime.now(timezone.utc).isoformat()
     for service in EXPECTED_SERVICES:
-        try:
-            completed = subprocess.run(
-                ["docker", "logs", "--until", cutoff, containers[service]],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except subprocess.SubprocessError as exc:
-            raise RuntimeError(f"Unable to inspect {service} logs") from exc
-        if completed.returncode:
-            raise RuntimeError(f"Unable to inspect {service} logs")
-        log = completed.stdout + completed.stderr
+        if remote_runtime is not None:
+            completed = remote_runtime.run(service, "logs", cutoff=cutoff)
+            log = completed["stdout"] + completed["stderr"]
+        else:
+            log = _local_service_logs(service, containers[service], cutoff)
         results[service] = {
             "matches": {name: len(rule.findall(log)) for name, rule in rules.items()},
         }
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        image_check = executor.submit(verify_runtime_images)
-        final_state = ownership(create=False)
-        final_containers = _owned_service_containers(state["nonce"])
-        final_runtime_images = image_check.result()
-    if final_state.get("nonce") != state["nonce"]:
-        raise RuntimeError("Runtime ownership changed during log scan")
-    if final_containers != containers:
-        raise RuntimeError("Runtime container inventory changed during scan")
+    if config is not None:
+        if remote_config() != config:
+            raise RuntimeError("Runtime environment selection changed during log scan")
+        remote_runtime.verify_unchanged()
+        final_runtime_images = verify_runtime_images()
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            image_check = executor.submit(verify_runtime_images)
+            final_state = ownership(create=False)
+            final_containers = _owned_service_containers(state["nonce"])
+            final_runtime_images = image_check.result()
+        if final_state.get("nonce") != state["nonce"]:
+            raise RuntimeError("Runtime ownership changed during log scan")
+        if final_containers != containers:
+            raise RuntimeError("Runtime container inventory changed during scan")
     if final_runtime_images != runtime_images:
         raise RuntimeError("Runtime image or source binding changed during log scan")
     return {
-        "project": PROJECT,
+        "project": config["remote"]["compose_project"] if config is not None else PROJECT,
         "log_cutoff_utc": cutoff,
         "passed": all(
             not count for result in results.values() for count in result["matches"].values()
@@ -147,6 +155,26 @@ def scan_runtime_logs() -> dict:
         "scanned_container_ids": containers,
         "services": results,
     }
+
+
+def _local_service_logs(service, identifier, cutoff):
+    # Also guard the legacy path at the actual command boundary.
+    if remote_config() is not None:
+        raise RuntimeError("Remote environment cannot read local Docker logs")
+    try:
+        completed = subprocess.run(
+            ["docker", "logs", "--until", cutoff, identifier],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.SubprocessError as exc:
+        raise RuntimeError(f"Unable to inspect {service} logs") from exc
+    if completed.returncode:
+        raise RuntimeError(f"Unable to inspect {service} logs")
+    return completed.stdout + completed.stderr
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
-"""显式运行的真实本地基础设施验收；不使用网络或数据库替身。"""
+"""显式运行的隔离远端基础设施验收；不使用网络或数据库替身。"""
 
 import os
-import subprocess
 import time
 
 import httpx
@@ -9,9 +8,11 @@ import psycopg
 import pytest
 from celery import Celery
 
+from scripts.remote_service_operations import captured_runtime, stopped_service
 from scripts.verify_local_environment import (
     RABBITMQ_ADMIN_PASSWORD,
     RABBITMQ_ADMIN_USER,
+    development_database_url,
     verify_database,
     verify_rabbitmq,
 )
@@ -19,11 +20,10 @@ from scripts.verify_local_environment import (
 pytestmark = pytest.mark.skipif(
     os.getenv("EID_RUN_LIVE_TESTS") != "1", reason="需要显式隔离环境验收"
 )
-URL = "postgresql+psycopg://eid_migrator:local-migrate-only@localhost:55432/eid_local_dev"
 
 
 def test_real_dependency_health():
-    verify_database(URL)
+    verify_database(development_database_url())
     response = httpx.get("http://localhost:18080/health/ready", timeout=20)
     assert response.status_code == 200
     assert set(response.json()["checks"].values()) == {"ready"}
@@ -64,7 +64,7 @@ def test_real_worker_reports_its_own_dependencies_ready():
 
 
 def test_consumed_worker_queues_are_durable_quorum_queues():
-    verify_database(URL)
+    verify_database(development_database_url())
     verify_rabbitmq()
     auth = httpx.BasicAuth(RABBITMQ_ADMIN_USER, RABBITMQ_ADMIN_PASSWORD)
     with httpx.Client(
@@ -83,19 +83,12 @@ def test_consumed_worker_queues_are_durable_quorum_queues():
 
 
 def test_database_loss_denies_readiness_and_recovers():
-    verify_database(URL)
-    try:
-        subprocess.run(
-            ["docker", "stop", "eid-local-postgres-1"], check=True, capture_output=True, timeout=30
-        )
+    verify_database(development_database_url())
+    with stopped_service("postgres"):
         assert httpx.get("http://localhost:18080/health/live", timeout=5).status_code == 200
         response = httpx.get("http://localhost:18080/health/ready", timeout=20)
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "DEPENDENCY_NOT_READY"
-    finally:
-        subprocess.run(
-            ["docker", "start", "eid-local-postgres-1"], check=True, capture_output=True, timeout=30
-        )
     for _ in range(30):
         if httpx.get("http://localhost:18080/health/ready", timeout=20).status_code == 200:
             break
@@ -105,9 +98,10 @@ def test_database_loss_denies_readiness_and_recovers():
 
 
 def test_worker_identity_can_read_metadata_but_not_identity_workspace_data():
-    verify_database(URL)
+    verify_database(development_database_url())
     with psycopg.connect(
-        "postgresql://eid_worker:local-worker-only@localhost:55432/eid_local_dev", connect_timeout=3
+        development_database_url("eid_worker").replace("postgresql+psycopg:", "postgresql:"),
+        connect_timeout=3,
     ) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_api_write_only",)]
         for table in ("identity_account", "workspace", "workspace_membership"):
@@ -130,19 +124,12 @@ def test_worker_identity_can_read_metadata_but_not_identity_workspace_data():
 
 
 def test_worker_loss_denies_readiness_and_recovers():
-    verify_database(URL)
-    try:
-        subprocess.run(
-            ["docker", "stop", "eid-local-worker-1"], check=True, capture_output=True, timeout=30
-        )
+    verify_database(development_database_url())
+    with stopped_service("worker"):
         assert httpx.get("http://localhost:18080/health/live", timeout=5).status_code == 200
         response = httpx.get("http://localhost:18080/health/ready", timeout=20)
         assert response.status_code == 503
         assert response.json()["error"]["details"]["checks"]["worker"] == "unavailable"
-    finally:
-        subprocess.run(
-            ["docker", "start", "eid-local-worker-1"], check=True, capture_output=True, timeout=30
-        )
     for _ in range(30):
         if httpx.get("http://localhost:18080/health/ready", timeout=20).status_code == 200:
             break
@@ -170,9 +157,10 @@ def test_public_entrypoint_preserves_request_and_trace_ids():
 
 
 def test_running_worker_database_identity_loss_and_recovery():
-    verify_database(URL)
+    verify_database(development_database_url())
+    runtime = captured_runtime()
     with psycopg.connect(
-        "postgresql://postgres:local-postgres-admin-only@localhost:55432/eid_local_dev",
+        development_database_url("postgres").replace("postgresql+psycopg:", "postgresql:"),
         connect_timeout=3,
         autocommit=True,
     ) as admin:
@@ -187,12 +175,7 @@ def test_running_worker_database_identity_loss_and_recovery():
             checks = response.json()["error"]["details"]["checks"]
             assert checks["postgres"] == "ready"
             assert checks["worker"] == "unavailable"
-            probe = subprocess.run(
-                ["docker", "exec", "eid-local-worker-1", "python", "-m", "edw_worker.health"],
-                capture_output=True,
-                timeout=20,
-            )
-            assert probe.returncode == 1
+            assert runtime.run("worker", "worker-health")["returncode"] == 1
         finally:
             admin.execute("ALTER ROLE eid_worker LOGIN")
     for _ in range(15):
@@ -201,9 +184,4 @@ def test_running_worker_database_identity_loss_and_recovery():
         time.sleep(1)
     else:
         pytest.fail("Worker database identity recovery did not restore readiness")
-    probe = subprocess.run(
-        ["docker", "exec", "eid-local-worker-1", "python", "-m", "edw_worker.health"],
-        capture_output=True,
-        timeout=20,
-    )
-    assert probe.returncode == 0
+    assert runtime.run("worker", "worker-health")["returncode"] == 0

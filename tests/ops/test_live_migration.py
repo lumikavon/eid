@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.pool import NullPool
 from psycopg.rows import dict_row
 
-from scripts.verify_local_environment import verify_migration_target
+from scripts.verify_local_environment import development_database_url, verify_migration_target
 from edw_api.access.repository import first_workspace
 
 
@@ -21,9 +21,6 @@ pytestmark = pytest.mark.skipif(
     os.getenv("EID_RUN_LIVE_TESTS") != "1", reason="需要显式隔离环境验收"
 )
 ROOT = Path(__file__).parents[2]
-GUARDED_URL = (
-    "postgresql+psycopg://eid_migrator:local-migrate-only@localhost:55432/eid_local_dev"
-)
 REQUIRED_TABLES = {
     "alembic_version",
     "identity_account",
@@ -61,9 +58,10 @@ def _public_state(connection):
 
 @pytest.mark.parametrize("legacy_members", [False, True])
 def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy_members):
-    verify_migration_target(GUARDED_URL)
+    url = development_database_url()
+    verify_migration_target(url)
     schema = f"eid_migration_test_{uuid.uuid4().hex}"
-    engine = sa.create_engine(GUARDED_URL, poolclass=NullPool, connect_args={"connect_timeout": 3})
+    engine = sa.create_engine(url, poolclass=NullPool, connect_args={"connect_timeout": 3})
 
     with engine.connect() as connection:
         public_before = _public_state(connection)

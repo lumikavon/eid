@@ -10,21 +10,17 @@ import pytest
 
 import edw_api.db as db
 from edw_api.config import Settings
-from scripts.verify_local_environment import verify_database
+from scripts.verify_local_environment import development_database_url, verify_database
 
 
 pytestmark = pytest.mark.skipif(
     os.getenv("EID_RUN_LIVE_TESTS") != "1", reason="需要显式隔离环境验收"
 )
-GUARDED_URL = (
-    "postgresql+psycopg://eid_migrator:local-migrate-only@localhost:55432/eid_local_dev"
-)
-DATABASE_URL = GUARDED_URL.replace("postgresql+psycopg:", "postgresql:")
-
-
 def test_current_account_rejects_unmapped_and_inactive_database_identities(monkeypatch):
-    verify_database(GUARDED_URL)
-    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=3)
+    guarded_url = development_database_url()
+    verify_database(guarded_url)
+    database_url = guarded_url.replace("postgresql+psycopg:", "postgresql:")
+    conn = psycopg.connect(database_url, row_factory=dict_row, connect_timeout=3)
     suffix = uuid.uuid4().hex
     workspace_id = uuid.uuid4()
     unmapped_id = uuid.uuid4()
@@ -85,7 +81,7 @@ def test_current_account_rejects_unmapped_and_inactive_database_identities(monke
                      ARRAY['test'],ARRAY['测试部'],'self',ARRAY['draft'],1 FROM workspace_membership
                      WHERE workspace_id=%s""", (workspace_id,))
         monkeypatch.setattr(db, "connection", rollback_connection)
-        settings = Settings(database_url=DATABASE_URL)
+        settings = Settings(database_url=database_url)
 
         assert db.current_account(settings, f"unmapped-{suffix}") is None
         assert db.current_account(settings, f"inactive-identity-{suffix}") is None

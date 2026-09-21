@@ -21,6 +21,7 @@ def _runtime_fixture(
     replace_after_logs=None,
     source_change_after_logs=False,
 ):
+    monkeypatch.setattr(verify_runtime_logs, "remote_config", lambda: None)
     services = [
         service for service in verify_runtime_logs.EXPECTED_SERVICES if service != missing
     ]
@@ -244,3 +245,14 @@ def test_batch_inspection_requires_every_requested_container_identity(monkeypatc
     monkeypatch.setattr(verify_runtime_logs.subprocess, "check_output", changed)
     with pytest.raises(RuntimeError, match="Runtime log"):
         verify_runtime_logs.scan_runtime_logs()
+
+
+def test_remote_selection_blocks_legacy_local_docker_helpers(monkeypatch):
+    monkeypatch.setattr(verify_runtime_logs, "remote_config", lambda: {"environment": "seadee-develop"})
+    monkeypatch.setattr(verify_runtime_logs.subprocess, "run", lambda *a, **k: pytest.fail("Local Docker"))
+    monkeypatch.setattr(verify_runtime_logs.subprocess, "check_output",
+                        lambda *a, **k: pytest.fail("Local Docker"))
+    with pytest.raises(RuntimeError, match="cannot inspect local"):
+        verify_runtime_logs._owned_service_containers("owned-nonce")
+    with pytest.raises(RuntimeError, match="cannot read local"):
+        verify_runtime_logs._local_service_logs("api", "old-local-container", "unused")

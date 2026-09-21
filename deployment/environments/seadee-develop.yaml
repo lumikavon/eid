@@ -1,0 +1,56 @@
+# The SSH alias is resolved and checked before every connection.
+schema_version: 1
+environment: seadee-develop
+ssh:
+  alias: seadee-develop
+  hostname: 172.27.0.38
+  user: seadee
+  proxy_jump: jump-local
+remote:
+  root: /opt/eid
+  compose_project: eid-remote-dev
+  docker_endpoint: unix:///var/run/docker.sock
+  platform: linux/amd64
+  bind_address: 127.0.0.1
+  # Three real RabbitMQ CLI diagnostics measured 8.153s on this shared host.
+  # Keep every probe and retry; allow time for the complete authenticated check.
+  rabbitmq_health_timeout_seconds: 20
+  # Read-only node()/rabbit:data_dir() evidence captured on 2026-09-16.
+  # Preserve the current node; the older node directory remains untouched.
+  rabbitmq_identity:
+    hostname: 5e8cac11b089
+    nodename: rabbit@5e8cac11b089
+    data_dir: /var/lib/rabbitmq/mnesia/rabbit@5e8cac11b089
+  # Root-controlled ancestors are pinned, never adopted or chmod/chowned.
+  ancestors:
+    /: {uid: 0, gid: 0, mode: '0555'}
+    /opt: {uid: 0, gid: 0, mode: '0755'}
+  ports:
+    postgres: 55432
+    keycloak: 58080
+    rabbitmq: 55672
+    rabbitmq_management: 55673
+    redis: 56379
+    seaweedfs: 58333
+    nginx: 18080
+tunnels:
+  bind_address: 127.0.0.1
+  ports:
+    postgres: 15432
+    keycloak: 58080
+    rabbitmq: 55672
+    rabbitmq_management: 55673
+    # Windows reserves 56347-56446 on this workstation.
+    redis: 16379
+    seaweedfs: 58333
+    nginx: 18080
+application:
+  public_origin: http://localhost:18080
+  database: eid_local_dev
+  database_marker: eid-local-dev-v1
+  bucket: eid-local-artifacts
+  rabbitmq_vhost: eid-local
+  keycloak_realm: eid-local
+  # Existing isolated-development contracts compare these credentials exactly.
+  # They are public fixtures, never enterprise credentials. Access is via SSH only.
+  credentials: repository-development-fixtures

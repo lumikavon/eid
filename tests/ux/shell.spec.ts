@@ -447,8 +447,12 @@ for(const {width,height} of viewports){
 }
 
 test('post-flow runtime log gate covers every owned Compose service',async()=>{
+  // Remote inventory, nine log reads and post-scan guards exceed the local budget.
+  // Keep the scan and all assertions intact; only bound the complete SSH workflow.
+  const scanTimeout=process.env.EID_ENVIRONMENT_CONFIG?300000:60000;
+  test.setTimeout(scanTimeout+15000);
   const completed=spawnSync('uv',['run','--frozen','python','-m','scripts.verify_runtime_logs'],{
-    cwd:process.cwd(),encoding:'utf8',timeout:60000,
+    cwd:process.cwd(),encoding:'utf8',timeout:scanTimeout,windowsHide:true,
   });
   expect(completed.status,completed.stderr).toBe(0);
   const report=JSON.parse(completed.stdout);
@@ -463,7 +467,7 @@ test('post-flow runtime log gate covers every owned Compose service',async()=>{
     'rabbitmq_bootstrap_admin_password','rabbitmq_worker_password','s3_api_secret_key',
     's3_bootstrap_secret_key','s3_worker_secret_key',
   ]);
-  expect(Object.values(report.services).every((service:any)=>
+  expect(Object.values(report.services as Record<string,{matches:Record<string,number>}>).every(service=>
     Object.values(service.matches).every(count=>count===0)
   )).toBe(true);
   expect(report.runtime_images.services.api.container_id).toBe(report.scanned_container_ids.api);

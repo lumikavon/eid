@@ -1,6 +1,7 @@
 """本地环境归属守卫；任何无法验证的事实均阻止写入。"""
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
@@ -146,26 +148,67 @@ def require(condition, reason):
 
 
 def command(*args):
+    if args and args[0] == "docker" and remote_config() is not None:
+        raise IsolationError("远端环境禁止调用本机 Docker；使用经过 SSH 归属核验的远端入口")
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=30)
     require(result.returncode == 0, f"{args[0]} {args[1]} 检查失败；请检查本地工具/引擎")
     return result.stdout.strip()
 
 
+def remote_config():
+    from scripts.remote_environment import RemoteEnvironmentError, selected_config
+
+    try:
+        return selected_config()
+    except (RemoteEnvironmentError, OSError, ValueError, yaml.YAMLError) as exc:
+        raise IsolationError(f"远端环境选择无效: {exc}") from exc
+
+
+def environment_state_directory(local_root=None):
+    config = remote_config()
+    if config is not None:
+        from scripts.remote_environment import evidence_directory
+        return evidence_directory(config)
+    return (ROOT if local_root is None else local_root) / ".local"
+
+
+def database_client_port():
+    """Resolve the selected client endpoint at use time; invalid selectors fail closed."""
+    config = remote_config()
+    return config["tunnels"]["ports"]["postgres"] if config is not None else 55432
+
+
+def development_database_url(role="eid_migrator"):
+    """Build only the existing isolated-development database identity URLs."""
+    passwords = {"eid_migrator": "local-migrate-only", "eid_worker": "local-worker-only",
+                 "postgres": "local-postgres-admin-only"}
+    require(role in passwords, "不支持的本项目开发数据库身份")
+    return (f"postgresql+psycopg://{role}:{passwords[role]}"
+            f"@localhost:{database_client_port()}/eid_local_dev")
+
+
 def validate_url(value):
+    port = database_client_port()
     target = urlsplit(value.replace("postgresql+psycopg:", "postgresql:"))
     require(
         target.scheme == "postgresql"
         and target.hostname == "localhost"
-        and target.port == 55432
+        and target.port == port
         and target.path == "/eid_local_dev"
         and target.username == "eid_migrator"
         and not target.query
         and not target.fragment,
-        "迁移地址必须为本项目 localhost:55432/eid_local_dev 的迁移身份",
+        f"迁移地址必须为本项目 localhost:{port}/eid_local_dev 的迁移身份",
     )
 
 
 def verify_engine():
+    if config := remote_config():
+        from scripts.remote_environment import read_owner, remote_inventory, validate_remote_state
+
+        state = remote_inventory(config)
+        validate_remote_state(config, state, read_owner(config)["nonce"])
+        return state["server"]
     context = json.loads(command("docker", "context", "inspect"))[0]
     require(context["Name"] == "desktop-linux", "只允许本机 desktop-linux context")
     endpoint = context["Endpoints"]["docker"]["Host"]
@@ -191,6 +234,16 @@ def _require_version(tool, actual, required, remedy):
 
 
 def verify_docker_capabilities():
+    if config := remote_config():
+        from scripts.remote_environment import read_owner, remote_inventory, validate_remote_state
+
+        state = remote_inventory(config)
+        validate_remote_state(config, state, read_owner(config)["nonce"])
+        return {"docker_server": state["server"].get("Version"),
+                "docker_platform": "linux/amd64", "compose": state["compose"],
+                "compose_wait": True, "compose_wait_timeout": True, "buildx": state["buildx"],
+                "environment": config["environment"],
+                "build_mode": "source-verified imported images; no remote build claimed"}
     server = verify_engine()
     compose_version = command("docker", "compose", "version", "--short")
     compose_help = command("docker", "compose", "up", "--help")
@@ -289,6 +342,9 @@ def verify_image_manifest():
 
 
 def build_images():
+    if config := remote_config():
+        return {service: f"{config['remote']['compose_project']}-{service}:"
+                         f"{source_fingerprint(service)[7:23]}" for service in BUILD_SOURCE_ENV}
     try:
         manifest = json.loads(IMAGE_LOCK.read_text(encoding="utf-8"))
         images = manifest["build_images"]
@@ -383,6 +439,9 @@ def expected_build_source_fingerprints():
 
 
 def _recorded_owner_nonce():
+    if config := remote_config():
+        from scripts.remote_environment import read_owner
+        return read_owner(config)["nonce"]
     data = json.loads(STATE.read_text(encoding="utf-8"))
     require(isinstance(data, dict) and data.get("root") == str(ROOT) and data.get("project") == PROJECT, "运行镜像归属记录不属于当前工作区")
     require(isinstance(data.get("nonce"), str) and bool(data["nonce"]), "运行镜像归属 nonce 缺失")
@@ -409,6 +468,9 @@ def _runtime_container_id(service, image_id, *, require_health=True, expected_ow
 
 
 def current_runtime_images(expected_source_fingerprints=None):
+    if config := remote_config():
+        from scripts.remote_environment import runtime_images
+        return runtime_images(config, expected_source_fingerprints)["services"]
     owner = _recorded_owner_nonce()
     current_source_fingerprints = source_fingerprints()
     if expected_source_fingerprints is not None:
@@ -480,6 +542,45 @@ def record_runtime_images():
     # 延迟导入，避免 verify_readiness 顶层反向导入本模块时形成循环。
     from scripts.verify_readiness import verify_public_readiness
 
+    selector = os.environ.get("EID_ENVIRONMENT_CONFIG")
+    if config := remote_config():
+        from scripts.remote_environment import evidence_directory, runtime_images, verify_tunnels
+
+        config = copy.deepcopy(config)
+        expected_sources = copy.deepcopy(expected_build_source_fingerprints())
+        tunnels = copy.deepcopy(verify_tunnels(config))
+        path = evidence_directory(config) / "runtime-images.json"
+
+        def recheck_inputs():
+            require(os.environ.get("EID_ENVIRONMENT_CONFIG") == selector and remote_config() == config,
+                    "运行镜像记录期间远端环境选择或配置已变化")
+            require(expected_build_source_fingerprints() == expected_sources,
+                    "运行镜像记录期间构建前源指纹已变化")
+
+        verify_public_readiness()
+        recheck_inputs()
+        manifest = runtime_images(config, expected_sources)
+        verify_public_readiness()
+        recheck_inputs()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            # Stage separately for each recorder, then perform the final checks
+            # immediately before replacing accepted evidence.
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=".runtime-images-", suffix=".tmp",
+                                             delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+            require(runtime_images(config, expected_sources) == manifest,
+                    "最终 readiness 期间远端运行候选已变化；拒绝记录旧清单")
+            require(verify_tunnels(config) == tunnels, "最终 readiness 期间 SSH 隧道已变化")
+            recheck_inputs()
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return manifest
     verify_public_readiness()
     records = current_runtime_images(expected_build_source_fingerprints())
     verify_public_readiness()
@@ -496,6 +597,13 @@ def record_runtime_images():
 
 
 def verify_runtime_images():
+    if config := remote_config():
+        from scripts.remote_environment import runtime_images
+
+        path = environment_state_directory() / "runtime-images.json"
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        require(recorded == runtime_images(config), "远端运行镜像、来源或源文件已变化；需重新验收记录")
+        return recorded
     try:
         recorded = json.loads(RUNTIME_IMAGE_MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -519,6 +627,12 @@ def verify_runtime_images():
 
 
 def ownership(create=False):
+    if config := remote_config():
+        from scripts.remote_environment import guarded_inventory
+
+        require(not create, "远端环境不能用本机 bootstrap --prepare 接管；需要已核验的远端安装收据")
+        receipt, _, _, _ = guarded_inventory(config)
+        return receipt
     verify_engine()
     existing_volumes = set(command("docker", "volume", "ls", "--format", "{{.Name}}").splitlines())
     all_container_ids = command("docker", "ps", "-aq").splitlines()
@@ -587,6 +701,29 @@ def ownership(create=False):
 def verify_database(value):
     validate_url(value)
     data = ownership()
+    if config := remote_config():
+        from scripts.remote_environment import guarded_service
+
+        guarded_service(config, "postgres", 5432, config["tunnels"]["ports"]["postgres"])
+    else:
+        _verify_local_database_container()
+    import psycopg
+
+    with psycopg.connect(
+        value.replace("postgresql+psycopg:", "postgresql:"), connect_timeout=3,
+        options="-c statement_timeout=5000 -c lock_timeout=2000",
+    ) as conn:
+        row = conn.execute(
+            "SELECT current_database(), current_user, shobj_description(oid, 'pg_database') FROM pg_database WHERE datname=current_database()"
+        ).fetchone()
+        require(
+            row == ("eid_local_dev", "eid_migrator", EXPECTED["marker"]),
+            "实际数据库名称/身份/marker不匹配",
+        )
+    return data
+
+
+def _verify_local_database_container():
     ids = command(
         "docker",
         "ps",
@@ -610,23 +747,12 @@ def verify_database(value):
         ),
         "数据库实际存储卷不匹配",
     )
-    import psycopg
-
-    with psycopg.connect(
-        value.replace("postgresql+psycopg:", "postgresql:"), connect_timeout=3,
-        options="-c statement_timeout=5000 -c lock_timeout=2000",
-    ) as conn:
-        row = conn.execute(
-            "SELECT current_database(), current_user, shobj_description(oid, 'pg_database') FROM pg_database WHERE datname=current_database()"
-        ).fetchone()
-        require(
-            row == ("eid_local_dev", "eid_migrator", EXPECTED["marker"]),
-            "实际数据库名称/身份/marker不匹配",
-        )
-    return data
 
 
 def service_container(service, container_port, host_port):
+    if config := remote_config():
+        from scripts.remote_environment import guarded_service
+        return guarded_service(config, service, container_port, host_port)
     ids = command(
         "docker",
         "ps",
@@ -1028,15 +1154,19 @@ def main():
         verify_migration_target(os.environ.get("EID_MIGRATION_DATABASE_URL", ""))
     live_resources_verified = not args.prepare and not args.source_fingerprints
     result = {
-        "project": PROJECT,
+        "project": remote_config()["remote"]["compose_project"] if remote_config() else PROJECT,
         "owner": data["nonce"],
         "ownership_verified": True,
         "live_resources_verified": live_resources_verified,
         "verified": live_resources_verified,
     }
+    if config := remote_config():
+        result["environment"] = config["environment"]
+        result["remote_host"] = config["ssh"]["hostname"]
+        result["remote_root"] = config["remote"]["root"]
     if live_resources_verified:
         result.update(
-            host="localhost:55432",
+            host=f"localhost:{database_client_port()}",
             database="eid_local_dev",
             bucket=EXPECTED["bucket"],
             rabbitmq_vhost=EXPECTED["rabbitmq_vhost"],

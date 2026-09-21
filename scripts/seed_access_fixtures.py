@@ -22,9 +22,9 @@ from psycopg.rows import dict_row
 from edw_api.access.policy import ROLE_OPERATIONS
 from scripts.verify_local_environment import (
     _keycloak_admin_headers, ownership, service_container, verify_migration_target,
+    development_database_url, environment_state_directory,
 )
 
-URL = "postgresql+psycopg://eid_migrator:local-migrate-only@localhost:55432/eid_local_dev"
 FIXTURE_PASSWORD = "eid-local-access"
 
 
@@ -130,12 +130,13 @@ def require_fixture(row, expected):
 
 
 def seed():
-    verify_migration_target(URL)
-    with fixture_lock(Path(__file__).resolve().parents[1]/".local/access-fixtures.lock"):
-        return _seed_verified()
+    database_url = development_database_url()
+    verify_migration_target(database_url)
+    with fixture_lock(environment_state_directory(Path(__file__).resolve().parents[1]) / "access-fixtures.lock"):
+        return _seed_verified(database_url)
 
 
-def _seed_verified():
+def _seed_verified(database_url):
     nonce = ownership(create=False)["nonce"]
     keycloak = service_container("keycloak", 8080, 58080)
     gateway = service_container("nginx", 8080, 18080)
@@ -146,7 +147,7 @@ def _seed_verified():
     def identifier(name):
         return uuid5(NAMESPACE_URL, "eid-access-fixture:"+nonce+":"+name)
     users = {}
-    receipt_path = Path(__file__).resolve().parents[1]/".local/access-fixture-receipts.json"
+    receipt_path = environment_state_directory(Path(__file__).resolve().parents[1]) / "access-fixture-receipts.json"
     receipts = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
     with httpx.Client(base_url="http://localhost:58080", timeout=5) as client:
         headers = _keycloak_admin_headers(client)
@@ -220,7 +221,7 @@ def _seed_verified():
             verify_fixture_login(username, boundary)
             users[role] = {"username": username, "subject": matches[0]["id"]}
     boundary()
-    with psycopg.connect(URL.replace("postgresql+psycopg:", "postgresql:"), row_factory=dict_row,
+    with psycopg.connect(database_url.replace("postgresql+psycopg:", "postgresql:"), row_factory=dict_row,
                          connect_timeout=3, options="-c statement_timeout=5000 -c lock_timeout=2000") as conn:
         actual = conn.execute("SELECT current_database(),current_user,shobj_description(oid,'pg_database') "
                               "AS marker FROM pg_database WHERE datname=current_database()").fetchone()

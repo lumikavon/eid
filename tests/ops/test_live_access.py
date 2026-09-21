@@ -16,11 +16,10 @@ from sqlalchemy.pool import NullPool
 
 from edw_api.access import repository
 from edw_api.access.policy import AccessDenied, ROLE_OPERATIONS
-from scripts.verify_local_environment import verify_migration_target
+from scripts.verify_local_environment import development_database_url, verify_migration_target
 
 pytestmark = pytest.mark.skipif(os.getenv("EID_RUN_LIVE_TESTS") != "1",
                                 reason="Explicit isolated PostgreSQL acceptance required")
-URL = "postgresql+psycopg://eid_migrator:local-migrate-only@localhost:55432/eid_local_dev"
 ACTOR = "11111111-1111-4111-8111-111111111111"
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
 SUBJECT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -28,12 +27,12 @@ SUBJECT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 @pytest.fixture(scope="module", autouse=True)
 def isolated_target():
-    verify_migration_target(URL)
+    verify_migration_target(development_database_url())
 
 
 @pytest.fixture
 def database():
-    admin_url = URL.replace("eid_migrator:local-migrate-only", "postgres:local-postgres-admin-only")
+    admin_url = development_database_url("postgres")
     engine = sa.create_engine(admin_url, poolclass=NullPool,
                               connect_args={"connect_timeout": 3,
                                             "options": "-c statement_timeout=5000 -c lock_timeout=2000"})
