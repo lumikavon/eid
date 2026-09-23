@@ -27,6 +27,7 @@ from .access.repository import CURRENT_WORKSPACE_SQL, workspace_discovery_params
 from .errors import ApiError
 from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
+from .tasks.routes import create_router as create_task_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
     WEB_CLIENT_ID,
@@ -41,6 +42,7 @@ verifier = OidcVerifier(settings)
 app = FastAPI(title="EID API", version="0.1.0")
 app.include_router(create_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
 
 TRACEPARENT_RE = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})")
@@ -201,7 +203,12 @@ def _postgres_status() -> str:
                            ('discovery_record','SELECT'), ('discovery_participant','SELECT'),
                            ('discovery_favorite','SELECT'), ('discovery_restore_policy','SELECT'),
                            ('discovery_receipt','SELECT'), ('discovery_favorite','INSERT'),
-                           ('discovery_receipt','INSERT')
+                           ('discovery_receipt','INSERT'),
+                           ('durable_task','SELECT'), ('durable_task','INSERT'),
+                           ('task_dependency','SELECT'), ('task_dependency','INSERT'),
+                           ('task_receipt','SELECT'), ('task_receipt','INSERT'),
+                           ('task_result','SELECT'), ('task_event','INSERT'),
+                           ('task_outbox','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
                            privilege

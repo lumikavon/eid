@@ -1,0 +1,430 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/task.schema.json",
+  "$defs": {
+    "InventoryInput": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 50,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "InventoryInput",
+      "type": "object"
+    },
+    "InventoryItem": {
+      "additionalProperties": false,
+      "properties": {
+        "resource_id": {
+          "format": "uuid",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "knowledge",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "resource_epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Resource Epoch",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "resource_id",
+        "kind",
+        "revision",
+        "resource_epoch"
+      ],
+      "title": "InventoryItem",
+      "type": "object"
+    },
+    "InventoryResult": {
+      "additionalProperties": false,
+      "properties": {
+        "result_id": {
+          "format": "uuid",
+          "title": "Result Id",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "scope": {
+          "const": "first_authorized_visible_records",
+          "title": "Scope",
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/InventoryItem"
+          },
+          "maxItems": 50,
+          "title": "Items",
+          "type": "array"
+        },
+        "policy_epoch": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "title": "Policy Epoch",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result_id",
+        "task_id",
+        "workspace_id",
+        "measured_at",
+        "scope",
+        "limit",
+        "items",
+        "policy_epoch"
+      ],
+      "title": "InventoryResult",
+      "type": "object"
+    },
+    "ResultResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/InventoryResult"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "ResultResponse",
+      "type": "object"
+    },
+    "SubmitTask": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "inventory",
+          "title": "Operation",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/InventoryInput"
+        },
+        "depends_on": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Depends On",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "title": "SubmitTask",
+      "type": "object"
+    },
+    "TaskEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "message_schema_version": {
+          "const": "1.0",
+          "title": "Message Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "const": "eid-api",
+          "title": "Source",
+          "type": "string"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "task.inventory.requested",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "aggregate_id": {
+          "format": "uuid",
+          "title": "Aggregate Id",
+          "type": "string"
+        },
+        "aggregate_version": {
+          "const": 1,
+          "title": "Aggregate Version",
+          "type": "integer"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "category": {
+          "const": "integration",
+          "title": "Category",
+          "type": "string"
+        },
+        "input_ref": {
+          "format": "uuid",
+          "title": "Input Ref",
+          "type": "string"
+        },
+        "input_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Hash",
+          "type": "string"
+        },
+        "actor_id": {
+          "format": "uuid",
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "delegation_id": {
+          "format": "uuid",
+          "title": "Delegation Id",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_schema_version",
+        "source",
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "aggregate_id",
+        "aggregate_version",
+        "task_id",
+        "category",
+        "input_ref",
+        "input_hash",
+        "actor_id",
+        "workspace_id",
+        "delegation_id",
+        "request_id",
+        "trace_id"
+      ],
+      "title": "TaskEnvelope",
+      "type": "object"
+    },
+    "TaskResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TaskSnapshot"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "TaskResponse",
+      "type": "object"
+    },
+    "TaskSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "SUCCEEDED",
+            "BLOCKED"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "waiting",
+            "inventory",
+            "done",
+            "blocked"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "category": {
+          "const": "integration",
+          "title": "Category",
+          "type": "string"
+        },
+        "operation": {
+          "const": "inventory",
+          "title": "Operation",
+          "type": "string"
+        },
+        "attempt": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "current_seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Current Seq",
+          "type": "integer"
+        },
+        "progress": {
+          "default": null,
+          "title": "Progress",
+          "type": "null"
+        },
+        "result_ref": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result Ref"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "enum": [
+                "AUTHORIZATION_EXPIRED_OR_REVOKED",
+                "DEPENDENCY_BLOCKED",
+                "INVALID_INVENTORY_INPUT"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "status_url": {
+          "title": "Status Url",
+          "type": "string"
+        },
+        "result_url": {
+          "title": "Result Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "state",
+        "stage",
+        "category",
+        "operation",
+        "attempt",
+        "current_seq",
+        "result_ref",
+        "error",
+        "created_at",
+        "updated_at",
+        "status_url",
+        "result_url"
+      ],
+      "title": "TaskSnapshot",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/SubmitTask"
+    },
+    {
+      "$ref": "#/$defs/TaskEnvelope"
+    },
+    {
+      "$ref": "#/$defs/TaskResponse"
+    },
+    {
+      "$ref": "#/$defs/ResultResponse"
+    }
+  ]
+}

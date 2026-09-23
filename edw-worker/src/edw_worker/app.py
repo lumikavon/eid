@@ -9,27 +9,41 @@ import psycopg
 import redis
 from celery import Celery
 from celery.worker.control import Panel
-from kombu import Queue
+from kombu import Exchange, Queue
 from botocore.config import Config
+from .inventory import register as register_inventory
 
 broker = os.environ["EID_RABBITMQ_URL"]
 app = Celery("edw_worker", broker=broker)
 app.conf.update(
     task_default_queue="integration",
+    task_default_exchange="integration",
+    task_default_exchange_type="direct",
+    task_default_routing_key="integration",
     task_queues=tuple(
-        Queue(name, durable=True, queue_arguments={"x-queue-type": "quorum"})
+        Queue(name, Exchange(name, type="direct", durable=True), routing_key=name,
+              durable=True, queue_arguments={"x-queue-type": "quorum"})
         for name in ("generation", "retrieval", "review", "parse_ocr", "render", "integration")
     ),
     broker_transport_options={"confirm_publish": True},
     task_serializer="json",
     accept_content=["json"],
     worker_send_task_events=True,
+    task_create_missing_queues=False,
+    worker_prefetch_multiplier=1,
 )
+register_inventory(app)
 
 DEPENDENCY_PROBE_NAMES = ("postgres", "redis", "s3")
 DEPENDENCY_PROBE_CAPACITY = len(DEPENDENCY_PROBE_NAMES) * 2
 _DEPENDENCY_EXECUTOR = ThreadPoolExecutor(max_workers=len(DEPENDENCY_PROBE_NAMES))
 _DEPENDENCY_CAPACITY = threading.BoundedSemaphore(DEPENDENCY_PROBE_CAPACITY)
+_RELAY_READY = None
+
+
+def set_relay_readiness(ready_event):
+    global _RELAY_READY
+    _RELAY_READY = ready_event
 
 
 def _database_probe(operation_timeout: float) -> None:
@@ -52,9 +66,23 @@ def _database_probe(operation_timeout: float) -> None:
         # Execute the exact read-only dependency; an absent grant/function fails readiness.
         conn.execute("SELECT eid_worker_access(%s)",
                      ("00000000-0000-0000-0000-000000000000",)).fetchone()
+        # Privilege inspection only: readiness never claims or completes a task.
+        task_grants = conn.execute("""
+            SELECT has_function_privilege(current_user,'eid_task_relay_claim(uuid)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_task_relay_confirm(uuid,uuid,jsonb,text)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_task_relay_quarantine(uuid,uuid,jsonb,text,text,text)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_task_claim(uuid,jsonb,text,uuid)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_task_finish_inventory(uuid,uuid)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_task_quarantine(uuid,text,text,text)','EXECUTE')
+             AND NOT has_table_privilege(current_user,'durable_task','UPDATE')
+             AND NOT has_table_privilege(current_user,'task_result','INSERT')
+             AND NOT has_table_privilege(current_user,'discovery_record','SELECT')
+            """).fetchone()
+        if task_grants != (True,):
+            raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0007_workspace_discovery")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0008_durable_submission")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:
@@ -144,6 +172,8 @@ def verify_dependencies(*, timeout_seconds: float = 2.0, **_kwargs):
 @Panel.register(name="dependency_readiness")
 def dependency_readiness(_state, timeout_seconds: float = 2.0, **_kwargs):
     try:
+        if _RELAY_READY is None or not _RELAY_READY.is_set():
+            raise RuntimeError("Durable relay is unavailable")
         verify_dependencies(timeout_seconds=timeout_seconds)
     except Exception:
         return {"status": "unavailable"}

@@ -35,7 +35,8 @@ def test_migration_extends_existing_head_and_has_no_data_cleanup(monkeypatch):
                 "discovery_restore_policy", "discovery_receipt"}
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "migrations"))
-    assert ScriptDirectory.from_config(config).get_current_head() == module.revision
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_revision("0008_durable_submission").down_revision == module.revision
     with pytest.raises(RuntimeError):
         module.downgrade()
 

@@ -18,7 +18,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from scripts.seed_access_fixtures import fixture_lock
+from scripts.seed_access_fixtures import SUPPORTED_FIXTURE_REVISIONS, fixture_lock
 from scripts.verify_access_fixtures import preflight, read_document
 from scripts.verify_local_environment import (
     _recorded_owner_nonce, development_database_url, environment_state_directory,
@@ -171,8 +171,10 @@ def verify_connection(conn):
         "shobj_description(oid,'pg_database') AS marker,current_schema() AS schema "
         "FROM pg_database WHERE datname=current_database()").fetchone()
     require(actual == expected, "Discovery fixture database boundary mismatch")
-    require(conn.execute("SELECT version_num FROM alembic_version").fetchall() == [{"version_num": HEAD}],
+    revisions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+    require(revisions in [[{"version_num": revision}] for revision in SUPPORTED_FIXTURE_REVISIONS],
             "Apply the guarded discovery migration before seeding")
+    return revisions[0]["version_num"]
 
 
 def verify_identities(conn, users):
@@ -253,9 +255,12 @@ def seed(run_id):
             "identity_receipts_sha256": digest(identity_receipts),
             "definition_sha256": digest(declared), **declared}
         completion = {"schema_version": 1, "run_id": run_id, "definition_sha256": digest(declared),
-                      "boundary": boundary, "database": "eid_local_dev", "schema_head": HEAD}
+                      "boundary": boundary, "database": "eid_local_dev"}
         if done_path.exists():
-            require(read_receipt(done_path) == completion, "Discovery completion receipt drift")
+            existing_completion = read_receipt(done_path)
+            require(existing_completion in [completion | {"schema_head": revision}
+                    for revision in SUPPORTED_FIXTURE_REVISIONS], "Discovery completion receipt drift")
+            completion = existing_completion
         require(previous is None or previous == receipt, "Discovery receipt drift; refusing overwrite")
         if previous is None:
             require(not done_path.exists(), "Completion receipt exists without an immutable plan")
@@ -265,7 +270,14 @@ def seed(run_id):
         require(selected_boundary() == boundary, "Discovery fixture boundary changed before connect")
         with psycopg.connect(url.replace("postgresql+psycopg:", "postgresql:"), row_factory=dict_row,
                 connect_timeout=3, options="-c statement_timeout=5000 -c lock_timeout=2000") as conn:
-            verify_connection(conn)
+            current_revision = verify_connection(conn)
+            if "schema_head" in completion:
+                # Preserve the original receipt across an explicitly supported expand migration.
+                require(SUPPORTED_FIXTURE_REVISIONS.index(completion["schema_head"])
+                        <= SUPPORTED_FIXTURE_REVISIONS.index(current_revision),
+                        "Discovery completion receipt schema is newer than the guarded database")
+            else:
+                completion["schema_head"] = current_revision
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                          ("eid-discovery-seed:" + boundary["nonce"],))
             verify_identities(conn, users)

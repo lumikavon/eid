@@ -196,6 +196,7 @@ class SeedConnection(FakeRows):
         super().__init__(declared)
         self.rows = {table: [] for table in self.rows}
         self.committed = False
+        self.schema_head = fixtures.HEAD
         self.identity = {"database": "eid_local_dev", "role": "eid_migrator",
                          "marker": "eid-local-dev-v1", "schema": "public"}
 
@@ -214,7 +215,7 @@ class SeedConnection(FakeRows):
         if "FROM pg_database" in query:
             return Result([self.identity])
         if "FROM alembic_version" in query:
-            return Result([{"version_num": fixtures.HEAD}])
+            return Result([{"version_num": self.schema_head}])
         if "pg_advisory_xact_lock" in query:
             return Result([{}])
         if "FROM identity_account" in query:
@@ -295,6 +296,39 @@ def test_complete_receipt_drift_is_rejected_before_any_connection(monkeypatch, t
     monkeypatch.setattr(fixtures.psycopg, "connect", lambda *a, **k: pytest.fail("drift must stop before connection"))
     with pytest.raises(RuntimeError, match="completion receipt drift"):
         fixtures.seed("safe")
+
+
+def test_0007_completion_receipt_is_preserved_when_current_schema_is_0008(monkeypatch, tmp_path):
+    conn = setup_seed(monkeypatch, tmp_path)
+    first = fixtures.seed("safe")
+    completion_path = Path(first["completion_receipt"])
+    assert json.loads(completion_path.read_text())["schema_head"] == "0007_workspace_discovery"
+    conn.schema_head = "0008_durable_submission"
+    repeated = fixtures.seed("safe")
+    assert repeated["created"] is False
+    assert json.loads(completion_path.read_text())["schema_head"] == "0007_workspace_discovery"
+
+
+@pytest.mark.parametrize("revisions,accepted", [
+    ([{"version_num": "0007_workspace_discovery"}], "0007_workspace_discovery"),
+    ([{"version_num": "0008_durable_submission"}], "0008_durable_submission"),
+    ([], None),
+    ([{"version_num": "unknown_head"}], None),
+    ([{"version_num": "0007_workspace_discovery"}, {"version_num": "0008_durable_submission"}], None),
+])
+def test_schema_guard_accepts_only_one_supported_discovery_head(revisions, accepted):
+    class Connection:
+        def execute(self, query):
+            if "FROM pg_database" in query:
+                return Result([{"database": "eid_local_dev", "role": "eid_migrator",
+                                "marker": "eid-local-dev-v1", "schema": "public"}])
+            assert "FROM alembic_version" in query
+            return Result(revisions)
+    if accepted is None:
+        with pytest.raises(RuntimeError, match="guarded discovery migration"):
+            fixtures.verify_connection(Connection())
+    else:
+        assert fixtures.verify_connection(Connection()) == accepted
 
 
 def test_live_schema_helpers_require_opt_in_before_environment_or_connections(monkeypatch):

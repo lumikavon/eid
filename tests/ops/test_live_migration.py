@@ -30,6 +30,8 @@ REQUIRED_TABLES = {
     "access_invalidation", "access_delegation", "access_current_facts",
     "discovery_record", "discovery_participant", "discovery_favorite",
     "discovery_restore_policy", "discovery_receipt",
+    "durable_task", "task_dependency", "task_event", "task_outbox", "task_inbox",
+    "task_attempt", "task_result", "task_receipt", "task_quarantine",
 }
 
 
@@ -107,7 +109,7 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0007_workspace_discovery"
+            ).scalar_one() == "0008_durable_submission"
             assert set(
                 connection.execute(
                     sa.text(
@@ -156,7 +158,8 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                         {"role": role, "table": qualified_table},
                     ).scalar_one()
                     expected = table == "alembic_version" or (role == "eid_api" and table not in {
-                        "access_audit", "access_invalidation", "access_delegation"})
+                        "access_audit", "access_invalidation", "access_delegation",
+                        "task_event", "task_outbox", "task_inbox", "task_attempt", "task_quarantine"})
                     assert allowed is expected
 
             assert _public_state(connection) == public_before

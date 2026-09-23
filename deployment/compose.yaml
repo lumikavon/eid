@@ -7,7 +7,7 @@ x-runtime-environment: &runtime
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0007_workspace_discovery
+  EID_REQUIRED_SCHEMA_REVISION: 0008_durable_submission
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
@@ -91,6 +91,8 @@ services:
       start_period: 5s
   worker:
     labels: *ownership
+    init: true
+    stop_grace_period: 20s
     image: eid-local-worker:0.1.0
     build:
       context: ..

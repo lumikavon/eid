@@ -34,7 +34,7 @@ class Connection:
     def __init__(
         self,
         marker: str,
-        revision: str | list[tuple[str]] = "0007_workspace_discovery",
+        revision: str | list[tuple[str]] = "0008_durable_submission",
         user: str = "eid_worker",
         database: str = "eid_local_dev",
     ):
@@ -61,6 +61,8 @@ class Connection:
         if "eid_worker_access" in sql:
             assert params == ("00000000-0000-0000-0000-000000000000",)
             return QueryResult(None)
+        if "has_function_privilege" in sql:
+            return QueryResult(True)
         raise AssertionError(f"unexpected query: {sql}")
 
 
@@ -76,6 +78,8 @@ def configure_non_database_dependencies(monkeypatch):
     monkeypatch.setattr(worker_app.redis, "from_url", lambda *_args, **_kwargs: RedisClient())
     monkeypatch.setattr(worker_app.boto3, "client", lambda *_args, **_kwargs: S3Client())
     monkeypatch.setenv("EID_DATABASE_URL", "postgresql://worker@postgres/eid_local_dev")
+    monkeypatch.setenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
+    monkeypatch.setenv("EID_REQUIRED_SCHEMA_REVISION", "0008_durable_submission")
     monkeypatch.setenv("EID_REDIS_URL", "redis://redis:6379/0")
     monkeypatch.setenv("EID_S3_ENDPOINT_URL", "http://seaweedfs:8333")
     monkeypatch.setenv("EID_S3_ACCESS_KEY", "eid-s3-worker")
@@ -90,11 +94,29 @@ def test_worker_dependency_gate_accepts_exact_marker_and_revision(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0007_workspace_discovery",
+            "0008_durable_submission",
         ),
     )
 
     worker_app.verify_dependencies()
+
+
+def test_worker_readiness_checks_current_relay_function_signatures(monkeypatch):
+    configure_non_database_dependencies(monkeypatch)
+    connection = Connection("eid-local-dev-v1")
+    monkeypatch.setattr(worker_app.psycopg, "connect", lambda *a, **k: connection)
+
+    worker_app._database_probe(1)
+
+    privilege_queries = [sql for sql in connection.queries if "has_function_privilege" in sql]
+    assert len(privilege_queries) == 1
+    privilege_query = privilege_queries[0]
+    assert "'eid_task_relay_confirm(uuid,uuid,jsonb,text)'" in privilege_query
+    assert "'eid_task_relay_quarantine(uuid,uuid,jsonb,text,text,text)'" in privilege_query
+    assert "'eid_task_relay_confirm(uuid,uuid)'" not in privilege_query
+    assert "NOT has_table_privilege(current_user,'durable_task','UPDATE')" in privilege_query
+    assert "NOT has_table_privilege(current_user,'task_result','INSERT')" in privilege_query
+    assert "NOT has_table_privilege(current_user,'discovery_record','SELECT')" in privilege_query
 
 
 def test_worker_readiness_rejects_missing_authorization_execute(monkeypatch):
@@ -106,6 +128,25 @@ def test_worker_readiness_rejects_missing_authorization_execute(monkeypatch):
             return super().execute(sql, params)
     monkeypatch.setattr(worker_app.psycopg, "connect", lambda *a, **k: MissingExecute("eid-local-dev-v1"))
     with pytest.raises(worker_app.psycopg.errors.InsufficientPrivilege):
+        worker_app._database_probe(1)
+
+
+@pytest.mark.parametrize("privileges", [False, None])
+def test_worker_readiness_rejects_missing_or_excess_task_privileges(monkeypatch, privileges):
+    configure_non_database_dependencies(monkeypatch)
+
+    class InvalidTaskPrivileges(Connection):
+        def execute(self, sql, params=None):
+            if "has_function_privilege" in sql:
+                return QueryResult(privileges)
+            return super().execute(sql, params)
+
+    monkeypatch.setattr(
+        worker_app.psycopg,
+        "connect",
+        lambda *a, **k: InvalidTaskPrivileges("eid-local-dev-v1"),
+    )
+    with pytest.raises(RuntimeError, match="task privileges"):
         worker_app._database_probe(1)
 
 
@@ -135,9 +176,12 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     monkeypatch,
 ):
     configure_non_database_dependencies(monkeypatch)
+    relay_ready = threading.Event()
+    relay_ready.set()
+    monkeypatch.setattr(worker_app, "_RELAY_READY", relay_ready)
     database = {
         "marker": "eid-local-dev-v1",
-        "revision": "0007_workspace_discovery",
+        "revision": "0008_durable_submission",
     }
     monkeypatch.setattr(
         worker_app.psycopg,
@@ -148,11 +192,14 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
     database["revision"] = "0000_stale"
     assert worker_app.dependency_readiness(None) == {"status": "unavailable"}
-    database["revision"] = "0007_workspace_discovery"
+    database["revision"] = "0008_durable_submission"
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
 
 
 def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
+    relay_ready = threading.Event()
+    relay_ready.set()
+    monkeypatch.setattr(worker_app, "_RELAY_READY", relay_ready)
     monkeypatch.setattr(
         worker_app,
         "verify_dependencies",
@@ -168,7 +215,7 @@ def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
 @pytest.mark.parametrize(
     ("marker", "revision", "message"),
     [
-        ("foreign-environment", "0007_workspace_discovery", "environment marker"),
+        ("foreign-environment", "0008_durable_submission", "environment marker"),
         ("eid-local-dev-v1", "0000_stale", "schema revision"),
     ],
 )
@@ -204,7 +251,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     configure_non_database_dependencies(monkeypatch)
     connection = Connection(
         "eid-local-dev-v1",
-        "0007_workspace_discovery",
+        "0008_durable_submission",
         user=user,
         database=database,
     )
@@ -225,7 +272,8 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     [
         [],
         [("0000_stale",)],
-        [("0007_workspace_discovery",), ("0002_divergent",)],
+        [("0007_workspace_discovery",)],
+        [("0008_durable_submission",), ("0002_divergent",)],
     ],
 )
 def test_worker_dependency_gate_requires_exactly_one_expected_revision(
@@ -250,7 +298,7 @@ def test_worker_dependency_gate_rejects_redis_failure(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0007_workspace_discovery",
+            "0008_durable_submission",
         ),
     )
     monkeypatch.setattr(
@@ -270,7 +318,7 @@ def test_worker_dependency_gate_rejects_s3_client_error(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0007_workspace_discovery",
+            "0008_durable_submission",
         ),
     )
 
@@ -296,7 +344,7 @@ def test_worker_dependency_clients_close_after_success(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0007_workspace_discovery",
+            "0008_durable_submission",
         ),
     )
 
@@ -367,8 +415,9 @@ def test_worker_entrypoint_injects_stable_node_name(monkeypatch):
     assert "--hostname=eid-worker@worker" not in custom_arguments
 
 
-def test_worker_main_runs_dependency_gate_before_consumer(monkeypatch):
+def test_worker_main_runs_dependency_gate_before_supervised_pair(monkeypatch):
     calls = []
+    monkeypatch.setenv("EID_WORKER_NODE_NAME", "eid-worker@worker")
     monkeypatch.setattr(
         worker_main,
         "register_worker_log_safety",
@@ -376,37 +425,38 @@ def test_worker_main_runs_dependency_gate_before_consumer(monkeypatch):
     )
     monkeypatch.setattr(worker_main, "verify_dependencies", lambda: calls.append("gate"))
     monkeypatch.setattr(
-        worker_main.app,
-        "worker_main",
-        lambda arguments: calls.append(("consumer", arguments)),
+        worker_main,
+        "supervise",
+        lambda arguments: calls.append(("supervise", arguments)) or 0,
     )
     monkeypatch.setattr(worker_main.sys, "argv", ["edw-worker", "worker", "--concurrency=1"])
 
-    worker_main.main()
+    assert worker_main.main() == 0
 
     assert calls == [
         "log-safety",
         "gate",
-        ("consumer", ["worker", "--concurrency=1", "--hostname=eid-worker@worker"]),
+        ("supervise", ["worker", "--concurrency=1", "--hostname=eid-worker@worker"]),
     ]
 
 
-def test_worker_main_gate_failure_blocks_consumer(monkeypatch):
-    consumer_started = False
+def test_worker_main_gate_failure_blocks_supervised_pair(monkeypatch):
+    supervisor_started = False
 
     def reject_dependencies():
         raise RuntimeError("dependency gate rejected startup")
 
-    def start_consumer(_arguments):
-        nonlocal consumer_started
-        consumer_started = True
+    def start_supervisor(_arguments):
+        nonlocal supervisor_started
+        supervisor_started = True
 
     monkeypatch.setattr(worker_main, "verify_dependencies", reject_dependencies)
-    monkeypatch.setattr(worker_main.app, "worker_main", start_consumer)
+    monkeypatch.setattr(worker_main, "supervise", start_supervisor)
+    monkeypatch.setattr(worker_main.sys, "argv", ["edw-worker", "worker", "--concurrency=1"])
 
     with pytest.raises(RuntimeError, match="dependency gate rejected startup"):
         worker_main.main()
-    assert consumer_started is False
+    assert supervisor_started is False
 
 
 def test_worker_health_requires_directed_dependency_readiness(monkeypatch):

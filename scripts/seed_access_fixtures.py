@@ -26,6 +26,7 @@ from scripts.verify_local_environment import (
 )
 
 FIXTURE_PASSWORD = "eid-local-access"
+SUPPORTED_FIXTURE_REVISIONS = ("0007_workspace_discovery", "0008_durable_submission")
 
 
 @contextmanager
@@ -227,7 +228,8 @@ def _seed_verified(database_url):
                               "AS marker FROM pg_database WHERE datname=current_database()").fetchone()
         if actual != {"current_database": "eid_local_dev", "current_user": "eid_migrator", "marker": "eid-local-dev-v1"}:
             raise RuntimeError("Fixture database boundary mismatch")
-        if conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] != "0007_workspace_discovery":
+        revisions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+        if revisions not in [[{"version_num": revision}] for revision in SUPPORTED_FIXTURE_REVISIONS]:
             raise RuntimeError("Apply the current guarded migration before seeding fixtures")
         workspaces = [identifier("workspace-a"), identifier("workspace-b")]
         for suffix, wid in zip(("a", "b"), workspaces):
