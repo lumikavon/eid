@@ -71,7 +71,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-24-2026 02:20"
+last_updated: "09-24-2026 04:08"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -79,14 +79,14 @@ story_location: "_bmad-output/implementation-artifacts"
 
 development_status:
   # Epic 1: 6 L-delivery stories; source epic-1-secure-workspace.md
-  epic-1: in-progress
+  epic-1: done
   1-1-runnable-workspace: done
   1-2-current-access: done
   1-3-workspace-discovery: done # schema head 回执兼容返修经独立静态审查；运行验收 not-run
   1-4-durable-submission: done # software gate and source review; PG/RabbitMQ/ACK runtime not-run
   1-5-fenced-recovery: done # 用户限定软件门禁关闭；测试/迁移/DB/Broker/ACK 运行验收 not-run
   1-6-task-observation: done # 集成复盘返修已通过独立静态审查；测试、迁移及真实运行验收 not-run
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # Epic 2: 6 L-delivery stories; source epic-2-controlled-authoring.md
   epic-2: backlog
@@ -204,5 +204,19 @@ development_status:
   13-6-full-real-acceptance: backlog
   epic-13-retrospective: optional
 
-# No retrospective has been performed and no action item has been invented.
-action_items: []
+# Epic retrospective action items are tracked below.
+action_items:
+- id: "epic-1-retro-item-1-track-epic-1-deferred-l-r-p-evidence-in"
+  epic: 1
+  action: "Track Epic 1 deferred L/R/P evidence in Epic 13 and run it only after runtime
+    validation is reauthorized"
+  owner: "Epic 13 acceptance owner"
+  status: open
+  ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-24.md"
+- id: "epic-1-retro-item-2-add-a-static-migration-head-fixture-rece"
+  epic: 1
+  action: "Add a static migration-head fixture-receipt and API/Worker contract consistency
+    gate before later handlers depend on them"
+  owner: "Platform integration owner"
+  status: open
+  ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-24.md"
