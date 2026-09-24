@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     keycloak_admin_url: str = "http://keycloak:8080"
     keycloak_monitor_client_id: str = "eid-readiness-monitor"
     keycloak_monitor_client_secret: str = "local-keycloak-readiness-monitor-only"
-    required_schema_revision: str = "0008_durable_submission"
+    required_schema_revision: str = "0009_fenced_recovery"
     discovery_policy_environment: Literal["production", "isolated_development"] = "production"
     request_id_header: str = Field(default="X-Request-ID")
     worker_node_name: str = "eid-worker@worker"

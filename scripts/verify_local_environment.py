@@ -58,6 +58,12 @@ BUILD_SOURCE_ENV = {
     "worker": "EID_WORKER_SOURCE_FINGERPRINT",
     "web": "EID_WEB_SOURCE_FINGERPRINT",
 }
+APPLICATION_IMAGE_SOURCE = {
+    "api": "api",
+    "worker": "worker",
+    "worker-scheduler": "worker",
+    "web": "web",
+}
 EXPECTED = dict(
     database_host="localhost",
     database_name="eid_local_dev",
@@ -325,6 +331,13 @@ def verify_image_manifest():
         require(isinstance(services.get(name), dict) and services[name].get("image") == base_images[name], f"Compose 的 {name} 镜像未匹配锁清单")
     for name, image in build_images.items():
         require(isinstance(services.get(name), dict) and services[name].get("image") == image, f"Compose 的 {name} 构建镜像未显式版本化")
+    scheduler = services.get("worker-scheduler")
+    require(
+        isinstance(scheduler, dict)
+        and scheduler.get("image") == build_images["worker"]
+        and scheduler.get("build") == services["worker"].get("build"),
+        "Compose 的 worker-scheduler 必须复用 worker 构建镜像与源指纹",
+    )
     def from_instructions(source):
         return [line.strip() for line in source.splitlines() if re.match(r"^\s*FROM\s", line, re.IGNORECASE)]
     require(from_instructions(python_dockerfile) == [f"FROM {base_images['python']}"], "Python Dockerfile 基础镜像未匹配锁清单")
@@ -352,6 +365,11 @@ def build_images():
         raise IsolationError(f"无法读取构建镜像清单: {exc}") from exc
     require(isinstance(images, dict) and set(images) == {"api", "worker", "web"}, "构建镜像清单不完整")
     return images
+
+
+def application_images():
+    images = build_images()
+    return {service: images[source] for service, source in APPLICATION_IMAGE_SOURCE.items()}
 
 
 def infrastructure_images():
@@ -479,6 +497,7 @@ def current_runtime_images(expected_source_fingerprints=None):
             "源文件与构建前指纹不匹配；拒绝记录运行镜像",
         )
     def inspect_application(service, image_ref):
+        source_service = APPLICATION_IMAGE_SOURCE[service]
         try:
             image = json.loads(command("docker", "image", "inspect", image_ref))[0]
         except (json.JSONDecodeError, IndexError, TypeError) as exc:
@@ -489,15 +508,17 @@ def current_runtime_images(expected_source_fingerprints=None):
             "io.eid.source-fingerprint"
         )
         require(
-            image_fingerprint == current_source_fingerprints[service],
+            image_fingerprint == current_source_fingerprints[source_service],
             f"{service} 构建镜像缺少或不匹配当前源指纹标签；请重新运行 bootstrap",
         )
         if expected_source_fingerprints is not None:
             require(
-                image_fingerprint == expected_source_fingerprints[service],
+                image_fingerprint == expected_source_fingerprints[source_service],
                 f"{service} 构建镜像未绑定构建前源指纹",
             )
-        container_id = _runtime_container_id(service, image_id, expected_owner=owner)
+        container_id = _runtime_container_id(
+            service, image_id, require_health=service in current_source_fingerprints, expected_owner=owner,
+        )
         return {
             "image_ref": image_ref,
             "image_id": image_id,
@@ -522,7 +543,7 @@ def current_runtime_images(expected_source_fingerprints=None):
     # complete first pass before the replacement-detection pass begins.
     with ThreadPoolExecutor(max_workers=3) as executor:
         initial = {service: executor.submit(inspect_application, service, image_ref)
-                   for service, image_ref in build_images().items()}
+                   for service, image_ref in application_images().items()}
         initial.update({service: executor.submit(inspect_infrastructure, service, image_ref)
                         for service, image_ref in infrastructure_images().items()})
         records = {service: future.result() for service, future in initial.items()}
@@ -615,7 +636,7 @@ def verify_runtime_images():
     require(recorded.get("schema_version") == 2, "运行镜像清单 schema_version 必须为 2；请重新运行 bootstrap")
     require(recorded.get("source_fingerprint_algorithm") == "sha256", "运行镜像清单指纹算法无效")
     services = recorded.get("services")
-    applications = set(build_images())
+    applications = set(application_images())
     require(isinstance(services, dict) and set(services) == applications | set(infrastructure_images()), "运行镜像服务清单不完整")
     base_fields = {"image_ref", "image_id", "container_id"}
     require(

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, TypeAdapter, field_validator, model_validator
 
 MAX_ENVELOPE_BYTES = 8192
 CONSUMER = "inventory-v1"
@@ -85,21 +85,49 @@ class InventoryResult(Contract):
 
 class TaskSnapshot(Contract):
     task_id: UUID
-    state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "BLOCKED"]
-    stage: Literal["waiting", "inventory", "done", "blocked"]
+    state: Literal["QUEUED", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "BLOCKED", "FAILED",
+                   "CANCELLED", "DEAD_LETTER"]
+    stage: Literal["waiting", "inventory", "retry_wait", "done", "blocked", "failed",
+                   "cancelled", "dead_letter"]
     category: Literal["integration"]
     operation: Literal["inventory"]
     attempt: Annotated[int, Field(strict=True, ge=0, le=9007199254740991)]
+    fence_token: Annotated[int, Field(strict=True, ge=0, le=9007199254740991)] = 0
     current_seq: SafeInteger
     progress: None = None
     result_ref: UUID | None
     error: Literal[
-        "AUTHORIZATION_EXPIRED_OR_REVOKED", "DEPENDENCY_BLOCKED", "INVALID_INVENTORY_INPUT"
+        "AUTHORIZATION_EXPIRED_OR_REVOKED", "DEPENDENCY_BLOCKED", "INVALID_INVENTORY_INPUT",
+        "TRANSIENT_DEPENDENCY", "FORMAT_REPAIRABLE", "LEASE_EXPIRED", "ATTEMPTS_EXHAUSTED",
+        "CANCELLED_BY_ACTOR", "OUTBOX_POISONED"
     ] | None
+    error_class: Literal[
+        "TRANSIENT", "FORMAT", "PERMANENT", "LEASE_EXPIRED", "ATTEMPTS_EXHAUSTED"
+    ] | None = None
+    next_retry_at: datetime | None = None
+    cancel_requested: StrictBool = False
+    external_effect_state: Literal["none", "receipt_pending", "unknown", "confirmed"] = "none"
     created_at: datetime
     updated_at: datetime
     status_url: str
     result_url: str
+
+    @model_validator(mode="after")
+    def state_bindings(self):
+        stages = {
+            "QUEUED": "waiting", "RUNNING": "inventory", "RETRY_WAIT": "retry_wait",
+            "SUCCEEDED": "done", "BLOCKED": "blocked", "FAILED": "failed",
+            "CANCELLED": "cancelled", "DEAD_LETTER": "dead_letter",
+        }
+        if self.stage != stages[self.state]:
+            raise ValueError("Task state and stage mismatch")
+        if (self.state == "SUCCEEDED") != (self.result_ref is not None):
+            raise ValueError("Task result and state mismatch")
+        if (self.state in {"BLOCKED", "FAILED", "DEAD_LETTER"}) != (self.error is not None):
+            raise ValueError("Task error and state mismatch")
+        if (self.state == "RETRY_WAIT") != (self.next_retry_at is not None):
+            raise ValueError("Task retry plan and state mismatch")
+        return self
 
 
 class TaskResponse(Contract):

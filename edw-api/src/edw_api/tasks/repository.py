@@ -1,6 +1,6 @@
 """Task commands own a single short caller transaction; never contact the Broker."""
 import re
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
@@ -14,8 +14,12 @@ def snapshot(row):
     prefix = f"/api/v1/workspaces/{row['workspace_id']}/tasks/{row['id']}"
     return TaskSnapshot(task_id=row["id"], state=row["state"], stage=row["stage"],
                         category=row["category"], operation=row["operation"],
-                        attempt=row["attempt"], current_seq=row["current_seq"],
+                        attempt=row["attempt"], fence_token=row["fence_token"],
+                        current_seq=row["current_seq"],
                         result_ref=row["result_id"], error=row["error_code"],
+                        error_class=row["error_class"], next_retry_at=row["next_retry_at"],
+                        cancel_requested=row["cancel_requested"],
+                        external_effect_state=row["external_effect_state"],
                         created_at=row["created_at"], updated_at=row["updated_at"],
                         status_url=prefix, result_url=prefix + "/result")
 
@@ -123,3 +127,20 @@ def result(conn, subject, workspace_id, task_id):
                 or resource["policy_epoch"] != item.resource_epoch):
             raise AccessDenied()
     return value
+
+
+def cancel(conn, subject, workspace_id, task_id, request_id):
+    # Keep the workspace policy lock and the task ownership decision in the
+    # caller's transaction. The SECURITY DEFINER function locks the task and
+    # decides the completion/cancellation order with current database facts.
+    _, context, _ = _owned(conn, subject, workspace_id, task_id)
+    decision = conn.execute("SELECT eid_task_cancel_v2(%s,%s,%s) AS outcome",
+                            (task_id, UUID(context.actor_id), request_id)).fetchone()["outcome"]
+    if decision["status"] in {"not_found", "forbidden"}:
+        raise ApiError(404, "TASK_NOT_FOUND", "任务不存在或不可访问")
+    if decision["status"] == "too_late":
+        raise ApiError(409, "TASK_CANCEL_TOO_LATE", "任务已结束，无法取消",
+                       details={"status": "too_late"})
+    if decision["status"] != "cancel_requested":
+        raise ApiError(503, "TASK_STORAGE_UNAVAILABLE", "任务存储不可用", retryable=True)
+    return read(conn, subject, workspace_id, task_id)

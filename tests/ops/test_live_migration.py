@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
     os.getenv("EID_RUN_LIVE_TESTS") != "1", reason="需要显式隔离环境验收"
 )
 ROOT = Path(__file__).parents[2]
-REQUIRED_TABLES = {
+REQUIRED_0008_TABLES = {
     "alembic_version",
     "identity_account",
     "workspace",
@@ -33,6 +33,8 @@ REQUIRED_TABLES = {
     "durable_task", "task_dependency", "task_event", "task_outbox", "task_inbox",
     "task_attempt", "task_result", "task_receipt", "task_quarantine",
 }
+NEW_0009_TABLES = {"task_attempt_stage", "task_effect_intent", "task_scheduler_lease"}
+REQUIRED_TABLES = REQUIRED_0008_TABLES | NEW_0009_TABLES
 
 
 def _public_state(connection):
@@ -105,11 +107,24 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                         "VALUES (:identity,:workspace,:active)"
                     ), {"identity": identity, "workspace": workspace, "active": index != 2})
                     legacy.append((subject, workspace, index != 2))
+            upgrade("0008_durable_submission")
+            assert connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalar_one() == "0008_durable_submission"
+            assert set(
+                connection.execute(
+                    sa.text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = :schema"
+                    ),
+                    {"schema": schema},
+                ).scalars()
+            ) == REQUIRED_0008_TABLES
             upgrade("head")
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0008_durable_submission"
+            ).scalar_one() == "0009_fenced_recovery"
             assert set(
                 connection.execute(
                     sa.text(
@@ -159,8 +174,51 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                     ).scalar_one()
                     expected = table == "alembic_version" or (role == "eid_api" and table not in {
                         "access_audit", "access_invalidation", "access_delegation",
-                        "task_event", "task_outbox", "task_inbox", "task_attempt", "task_quarantine"})
+                        "task_event", "task_outbox", "task_inbox", "task_attempt", "task_quarantine",
+                        "task_scheduler_lease"})
                     assert allowed is expected
+
+            for table in NEW_0009_TABLES:
+                qualified_table = f'"{schema}"."{table}"'
+                for role in ("eid_api", "eid_worker"):
+                    for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+                        assert not connection.execute(
+                            sa.text("SELECT has_table_privilege(:role, :table, :privilege)"),
+                            {"role": role, "table": qualified_table, "privilege": privilege},
+                        ).scalar_one()
+
+            worker_only = (
+                "eid_task_claim_v2(uuid,jsonb,text,uuid)",
+                "eid_task_heartbeat_v2(uuid,uuid,bigint)",
+                "eid_task_stage_inventory_v2(uuid,uuid,bigint)",
+                "eid_task_finish_inventory_v2(uuid,uuid,bigint,text,text)",
+                "eid_task_fail_v2(uuid,uuid,bigint,text)",
+                "eid_task_stop_v2(uuid,uuid,bigint)",
+                "eid_task_scheduler_lease_v2(uuid)",
+                "eid_task_schedule_v2(uuid,bigint)",
+            )
+            api_only = (
+                "eid_task_cancel_v2(uuid,uuid,text)",
+                "eid_task_scheduler_ready_v2()",
+            )
+            revoked = (
+                "eid_task_claim(uuid,jsonb,text,uuid)",
+                "eid_task_finish_inventory(uuid,uuid)",
+            )
+            internal = (
+                "eid_task_bind_initial_event()",
+                "eid_task_envelope_hash(jsonb)",
+                "eid_task_isolate_poison_v2(uuid,jsonb,text,text,uuid)",
+            )
+            for function in worker_only + api_only + revoked + internal:
+                qualified_function = f'"{schema}".{function}'
+                for role in ("eid_api", "eid_worker"):
+                    allowed = connection.execute(
+                        sa.text("SELECT has_function_privilege(:role, :function, 'EXECUTE')"),
+                        {"role": role, "function": qualified_function},
+                    ).scalar_one()
+                    assert allowed is (function in worker_only and role == "eid_worker"
+                                       or function in api_only and role == "eid_api")
 
             assert _public_state(connection) == public_before
         finally:

@@ -8,7 +8,7 @@ import httpx
 from scripts.verify_local_environment import IsolationError, require
 
 READINESS_URL = "http://localhost:18080/health/ready"
-EXPECTED_CHECKS = {"postgres", "redis", "rabbitmq", "s3", "keycloak", "worker"}
+EXPECTED_CHECKS = {"postgres", "redis", "rabbitmq", "s3", "keycloak", "worker", "scheduler"}
 
 
 def verify_public_readiness():

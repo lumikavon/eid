@@ -30,7 +30,7 @@ test('readiness aborts a stalled request before the next poll and reports a read
 test('a completed readiness request clears its deadline',async()=>{
   const {getReadiness,REQUEST_TIMEOUT_MS}=await import('./api');
   let signal:AbortSignal|undefined;
-  vi.mocked(fetch).mockImplementation((_input,init)=>{signal=init?.signal??undefined;return Promise.resolve(new Response('{"status":"ready","checks":{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready"}}'))});
+  vi.mocked(fetch).mockImplementation((_input,init)=>{signal=init?.signal??undefined;return Promise.resolve(new Response('{"status":"ready","checks":{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready","scheduler":"ready"}}'))});
 
   await expect(getReadiness()).resolves.toBe('依赖已就绪');
   await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
@@ -69,7 +69,7 @@ test('an HTTP 200 with invalid JSON reports a stable readable response error',as
 
 test('a structured readiness 503 turns whitelisted dependency states into actionable reasons',async()=>{
   const {getReadiness}=await import('./api');
-  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{details:{checks:{postgres:'marker_schema_or_privilege_mismatch',redis:'ready',rabbitmq:'ready',s3:'bucket_missing',keycloak:'ready',worker:'unavailable'}}}}),{status:503}));
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{details:{checks:{postgres:'marker_schema_or_privilege_mismatch',redis:'ready',rabbitmq:'ready',s3:'bucket_missing',keycloak:'ready',worker:'unavailable',scheduler:'ready'}}}}),{status:503}));
   await expect(getReadiness()).rejects.toThrow('本地依赖尚未就绪：数据库环境、结构或读取权限不匹配，请运行隔离校验并检查迁移与授权；对象存储缺少项目专属存储桶，请检查本地存储初始化；后台任务服务无法连接，请检查 Worker 与消息队列连接');
 });
 
@@ -94,7 +94,7 @@ test.each([
   ['audience_mapper_mismatch','身份服务 audience 映射配置不匹配，请检查 Keycloak 协议映射器配置'],
 ])('a complete readiness 503 explains Keycloak %s without reflecting server content',async(status,reason)=>{
   const {getReadiness}=await import('./api');
-  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:'server-secret-content',details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:status,worker:'ready'}}}}),{status:503}));
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:'server-secret-content',details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:status,worker:'ready',scheduler:'ready'}}}}),{status:503}));
   const error=await getReadiness().then(()=>null,value=>value as Error);
   expect(error?.message).toBe(`本地依赖尚未就绪：${reason}`);
   expect(error?.message).not.toContain('server-secret-content');
@@ -103,7 +103,7 @@ test.each([
 test('a complete readiness 503 with an unknown Keycloak state stays generic and safe',async()=>{
   const {getReadiness}=await import('./api');
   const secret='unknown-keycloak-secret';
-  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:'server-secret-content',details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:secret,worker:'ready'}}}}),{status:503}));
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:'server-secret-content',details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:secret,worker:'ready',scheduler:'ready'}}}}),{status:503}));
   const error=await getReadiness().then(()=>null,value=>value as Error);
   expect(error?.message).toBe('本地依赖尚未就绪：依赖检查返回未知状态，请查看 API 服务日志');
   expect(error?.message).not.toContain(secret);
@@ -113,7 +113,7 @@ test('a complete readiness 503 with an unknown Keycloak state stays generic and 
 test('a readiness 503 never reflects unknown dependency names, states, or server messages',async()=>{
   const {getReadiness}=await import('./api');
   const secret='server-secret-content';
-  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:secret,details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:'ready',worker:secret,unexpected:secret}}}}),{status:503}));
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{message:secret,details:{checks:{postgres:'ready',redis:'ready',rabbitmq:'ready',s3:'ready',keycloak:'ready',worker:secret,scheduler:'ready',unexpected:secret}}}}),{status:503}));
   const error=await getReadiness().then(()=>null,value=>value as Error);
   if(!error)throw new Error('expected readiness rejection');
   expect(error.message).toBe('本地依赖尚未就绪');
@@ -132,9 +132,10 @@ test('an oversized readiness response is rejected without parsing or reflecting 
 });
 
 test.each([
-  ['incomplete',{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready"}],
-  ['array',["ready","ready","ready","ready","ready","ready"]],
-  ['extra',{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready","unexpected":"ready"}],
+  ['incomplete',{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready"}],
+  ['array',["ready","ready","ready","ready","ready","ready","ready"]],
+  ['extra',{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready","scheduler":"ready","unexpected":"ready"}],
+  ['invalid scheduler',{"postgres":"ready","redis":"ready","rabbitmq":"ready","s3":"ready","keycloak":"ready","worker":"ready","scheduler":"lease_inactive"}],
 ])('readiness rejects %s checks',async(_label,checks)=>{
   const {getReadiness}=await import('./api');
   vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({status:'ready',checks})));

@@ -44,13 +44,18 @@ def remote_runtime(monkeypatch):
         "labels": {"com.docker.compose.project": project,
                    "com.docker.compose.service": name, "io.eid.owner": receipt["nonce"],
                    "io.eid.environment": config["environment"]},
-        "state": "running", "health": "healthy", "mounts": [],
+        "state": "running", "health": None if name == "worker-scheduler" else "healthy",
+        "mounts": [],
         "networks": [project + "_default"], "network_mode": project + "_default", "ports": {},
         "image_id": "sha256:" + "c" * 64, "referenced_image_id": "sha256:" + "c" * 64,
-        "image_ref": f"{project}-{name}:locked", "image_labels": {},
+        "image_ref": f"{project}-{'worker' if name == 'worker-scheduler' else name}:locked",
+        "image_labels": {"io.eid.source-fingerprint":
+                         fingerprints[remote.APPLICATION_IMAGES[name]]}
+                        if name in remote.APPLICATION_IMAGES else {},
         "isolation_config": isolation_config(),
         "runtime_config": {"command": "fixture", "entrypoint": "fixture", "environment": {},
-                           "healthcheck": None},
+                           "healthcheck": None,
+                           "user": "eid" if name in {"api", "worker", "worker-scheduler"} else ""},
     } for index, name in enumerate(sorted(remote.SERVICES), 1)}
     volumes = [{"name": f"{project}-{name}",
                 "mountpoint": f"/var/lib/docker/volumes/{project}-{name}/_data"}
@@ -442,7 +447,7 @@ def test_operations_are_an_explicit_allowlist(remote_runtime, service, operation
     assert remote_runtime.transport == []
 
 
-def test_remote_log_scan_binds_nine_ids_and_scans_secrets_without_local_docker(remote_runtime):
+def test_remote_log_scan_binds_ten_ids_and_scans_secrets_without_local_docker(remote_runtime):
     secrets = list(log_gate.LOCAL_CREDENTIALS.values())
     remote_runtime.logs["api"] = " ".join(secrets) + " Bearer abcdefghijkl"
     result = log_gate.scan_runtime_logs()
@@ -453,7 +458,7 @@ def test_remote_log_scan_binds_nine_ids_and_scans_secrets_without_local_docker(r
         name: item["id"] for name, item in remote_runtime.containers.items()}
     assert set(result["services"]) == remote.SERVICES
     assert all(secret not in json.dumps(result) for secret in secrets)
-    assert len(remote_runtime.commands) == 9
+    assert len(remote_runtime.commands) == len(remote.SERVICES)
     assert all(command[3:6] == ["logs", "--until", result["log_cutoff_utc"]]
                for command in remote_runtime.commands)
     assert all("--tail" not in command and "--since" not in command
@@ -478,7 +483,7 @@ def test_successful_remote_logs_scan_stderr_only_secrets_and_redact_results(remo
                for count in service["matches"].values())
     serialized = json.dumps(result)
     assert bearer not in serialized and fixture not in serialized
-    assert len(remote_runtime.commands) == 9
+    assert len(remote_runtime.commands) == len(remote.SERVICES)
 
 
 @pytest.mark.parametrize("mutation", ["owner", "replacement", "source", "tunnel", "selection"])
@@ -487,7 +492,7 @@ def test_remote_log_scan_rejects_drift_after_last_log(remote_runtime, monkeypatc
 
     def drift_after_last_log(arguments, **kwargs):
         result = original(arguments, **kwargs)
-        if len(remote_runtime.transport) == 9:
+        if len(remote_runtime.transport) == len(remote.SERVICES):
             if mutation == "owner":
                 remote_runtime.receipt["nonce"] = "f" * 32
             elif mutation == "replacement":

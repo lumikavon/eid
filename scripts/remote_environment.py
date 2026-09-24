@@ -28,7 +28,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "deployment/environments/seadee-develop.yaml"
 SERVICES = {"postgres", "keycloak", "rabbitmq", "redis", "seaweedfs", "api", "worker",
-            "web", "nginx"}
+            "worker-scheduler", "web", "nginx"}
+APPLICATION_IMAGES = {"api": "api", "worker": "worker", "worker-scheduler": "worker",
+                      "web": "web"}
 PORTS = {"postgres": ("postgres", 5432), "keycloak": ("keycloak", 8080),
          "rabbitmq": ("rabbitmq", 5672), "rabbitmq_management": ("rabbitmq", 15672),
          "redis": ("redis", 6379), "seaweedfs": ("seaweedfs", 8333), "nginx": ("nginx", 8080)}
@@ -291,9 +293,10 @@ def render_compose(config, owner, files):
                                            "RABBITMQ_MNESIA_DIR": identity["data_dir"]})
         service["ports"] = [f"127.0.0.1:{config['remote']['ports'][name]}:{port}"
                             for name, (target, port) in PORTS.items() if target == service_name]
-        if service_name in {"api", "worker", "web"}:
-            fingerprint = image_source_fingerprint(service_name, files)
-            service["image"] = f"{project}-{service_name}:{fingerprint[7:23]}"
+        if service_name in APPLICATION_IMAGES:
+            image_service = APPLICATION_IMAGES[service_name]
+            fingerprint = image_source_fingerprint(image_service, files)
+            service["image"] = f"{project}-{image_service}:{fingerprint[7:23]}"
             service["build"]["args"] = {"EID_SOURCE_FINGERPRINT": fingerprint}
         else:
             require(service["image"] == lock["base_images"][service_name]
@@ -666,7 +669,7 @@ def validate_remote_state(config, state, owner=None, *, require_running=False,
                             "127.0.0.1", "::1"}, "An unrelated container occupies an EID port")
     if require_running:
         require(set(found) == SERVICES and set(found.values()) == {"running"},
-                "The complete nine-service EID environment is not running")
+                "The complete ten-service EID environment is not running")
         require({item["name"] for item in state["volumes"]} == volume_names
                 and {item["name"] for item in state["networks"]} == {network_name},
                 "Remote persistent resources are incomplete")
@@ -937,7 +940,7 @@ def validate_guard_state(config, state, owner, *, require_running=False):
             continue
         service = container["labels"]["com.docker.compose.service"]
         found[service] = container
-        if service in {"api", "worker"}:
+        if service in {"api", "worker", "worker-scheduler"}:
             user = (container.get("runtime_config") or {}).get("user")
             require(isinstance(user, str) and bool(user),
                     "Remote Python service requires a non-root runtime user: " + service)
@@ -952,9 +955,11 @@ def validate_guard_state(config, state, owner, *, require_running=False):
             require(container["state"] == "running", "Remote EID service is not running: " + service)
             require(container["image_id"] == container["referenced_image_id"],
                     "Remote running image ID differs from its reference: " + service)
-            if service in {"api", "worker", "web"}:
-                fingerprint = source_fingerprint(service)
-                expected_image = f"{config['remote']['compose_project']}-{service}:{fingerprint[7:23]}"
+            if service in APPLICATION_IMAGES:
+                image_service = APPLICATION_IMAGES[service]
+                fingerprint = source_fingerprint(image_service)
+                expected_image = (f"{config['remote']['compose_project']}-{image_service}:"
+                                  f"{fingerprint[7:23]}")
                 require(container["image_labels"].get("io.eid.source-fingerprint") == fingerprint,
                         "Remote image source fingerprint differs from current candidate: " + service)
             else:
@@ -1022,6 +1027,8 @@ def guarded_service(config, service, container_port, local_port):
 def runtime_manifest(config, receipt, state, containers, fingerprints, candidate):
     """One complete manifest contract shared by runtime recording and operation capture."""
     definitions = yaml.safe_load(candidate)["services"]
+    require(set(containers) == SERVICES and set(definitions) == SERVICES,
+            "Remote runtime manifest requires the complete ten-service candidate")
     records = {}
     for service, container in containers.items():
         require(container["health"] == "healthy" or
@@ -1034,8 +1041,8 @@ def runtime_manifest(config, receipt, state, containers, fingerprints, candidate
                   "runtime_config_sha256": configuration_digest({
                       "process": container["runtime_config"],
                       "isolation": container["isolation_config"]})}
-        if service in fingerprints:
-            record["source_fingerprint"] = fingerprints[service]
+        if service in APPLICATION_IMAGES:
+            record["source_fingerprint"] = fingerprints[APPLICATION_IMAGES[service]]
         records[service] = record
     return {"schema_version": 3, "source_fingerprint_algorithm": "sha256", "services": records,
             "provenance": {"environment": config["environment"], "ssh": config["ssh"],

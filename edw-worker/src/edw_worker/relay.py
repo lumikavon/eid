@@ -103,6 +103,43 @@ def relay_once(publisher=publish):
     return False
 
 
+def scheduler_once(owner):
+    """Lease and reconcile one DB-owned plan; relay publishes any new Outbox row."""
+    lease = call("SELECT eid_task_scheduler_lease_v2(%s)", (owner,))
+    if not isinstance(lease, dict):
+        raise RuntimeError("Invalid scheduler lease reply")
+    if lease.get("status") == "busy":
+        return False
+    fence = lease.get("fence_token")
+    if (lease.get("status") != "leased" or type(fence) is not int
+            or not 1 <= fence <= 9007199254740991):
+        raise RuntimeError("Invalid scheduler lease reply")
+    result = call("SELECT eid_task_schedule_v2(%s,%s)", (owner, fence))
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid scheduler result")
+    status = result.get("status")
+    if status in {"idle", "busy", "lost"}:
+        return False
+    if status in {"queued", "RETRY_WAIT", "CANCELLED", "DEAD_LETTER"}:
+        return True
+    raise RuntimeError("Invalid scheduler status")
+
+
+def scheduler_main():
+    from .log_safety import register_worker_log_safety
+    register_worker_log_safety()
+    logging.basicConfig(level=logging.INFO)
+    owner = uuid4()
+    while True:
+        try:
+            progressed = scheduler_once(owner)
+        except Exception as exc:
+            logger.warning("task_scheduler_pending error_type=%s", type(exc).__name__)
+            progressed = False
+        if not progressed:
+            time.sleep(1)
+
+
 def main(status_sender=None):
     from .log_safety import register_worker_log_safety
     register_worker_log_safety()

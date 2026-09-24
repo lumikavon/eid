@@ -50,7 +50,7 @@ EXPECTED_OIDC_AUDIENCE = WEB_CLIENT_ID
 READINESS_DEADLINE_SECONDS = 6.0
 KEYCLOAK_PROBE_DEADLINE_SECONDS = 4.5
 KEYCLOAK_HTTP_TIMEOUT_SECONDS = 0.75
-READINESS_PROBE_NAMES = ("postgres", "redis", "rabbitmq", "s3", "keycloak", "worker")
+READINESS_PROBE_NAMES = ("postgres", "redis", "rabbitmq", "s3", "keycloak", "worker", "scheduler")
 _READINESS_EXECUTOR = ThreadPoolExecutor(max_workers=len(READINESS_PROBE_NAMES))
 _READINESS_CAPACITY = threading.BoundedSemaphore(len(READINESS_PROBE_NAMES) * 2)
 
@@ -207,7 +207,8 @@ def _postgres_status() -> str:
                            ('durable_task','SELECT'), ('durable_task','INSERT'),
                            ('task_dependency','SELECT'), ('task_dependency','INSERT'),
                            ('task_receipt','SELECT'), ('task_receipt','INSERT'),
-                           ('task_result','SELECT'), ('task_event','INSERT'),
+                           ('task_result','SELECT'), ('task_attempt_stage','SELECT'),
+                           ('task_effect_intent','SELECT'), ('task_event','INSERT'),
                            ('task_outbox','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
@@ -226,6 +227,11 @@ def _postgres_status() -> str:
                 AND has_column_privilege(current_user,'discovery_favorite','revision','UPDATE')
                 AND has_column_privilege(current_user,'discovery_favorite','updated_at','UPDATE')
                 AND NOT has_table_privilege(current_user,'access_audit','SELECT')
+                AND NOT has_table_privilege(current_user,'durable_task','UPDATE')
+                AND NOT has_table_privilege(current_user,'task_attempt_stage','INSERT')
+                AND NOT has_table_privilege(current_user,'task_effect_intent','INSERT')
+                AND has_function_privilege(current_user,
+                    'eid_task_cancel_v2(uuid,uuid,text)', 'EXECUTE')
                 AND NOT has_column_privilege(current_user,'discovery_record','lifecycle','UPDATE')
                 FROM resolved
                 """
@@ -240,8 +246,35 @@ def _postgres_status() -> str:
     except (
         psycopg.errors.UndefinedColumn,
         psycopg.errors.UndefinedTable,
+        psycopg.errors.UndefinedFunction,
         psycopg.errors.InsufficientPrivilege,
     ):
+        return "marker_schema_or_privilege_mismatch"
+    except Exception:
+        return "unavailable"
+
+
+def _scheduler_status() -> str:
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=2,
+            options="-c statement_timeout=2000",
+        ) as conn:
+            identity = conn.execute(
+                "SELECT current_database(), current_user, "
+                "shobj_description(oid, 'pg_database') "
+                "FROM pg_database WHERE datname=current_database()"
+            ).fetchone()
+            if identity != ("eid_local_dev", "eid_api", settings.environment_marker):
+                return "marker_schema_or_privilege_mismatch"
+            lease = conn.execute("SELECT eid_task_scheduler_ready_v2()").fetchone()
+            if lease is not None and len(lease) == 1 and lease[0] is True:
+                return "ready"
+            if lease is not None and len(lease) == 1 and lease[0] is False:
+                return "lease_inactive"
+            return "unavailable"
+    except (psycopg.errors.UndefinedFunction, psycopg.errors.InsufficientPrivilege):
         return "marker_schema_or_privilege_mismatch"
     except Exception:
         return "unavailable"
@@ -513,6 +546,7 @@ def readiness() -> tuple[bool, dict[str, str]]:
         "s3": _s3_status,
         "keycloak": _keycloak_status,
         "worker": _worker_status,
+        "scheduler": _scheduler_status,
     }
     checks = dict.fromkeys(READINESS_PROBE_NAMES, "timeout")
     futures: dict[Future[str], str] = {}

@@ -24,6 +24,12 @@ def validation_probe(value: int):
 
 
 CLIENT = TestClient(main.app)
+REAL_SCHEDULER_STATUS = main._scheduler_status
+
+
+@pytest.fixture(autouse=True)
+def ready_scheduler_for_unrelated_health_contracts(monkeypatch):
+    monkeypatch.setattr(main, "_scheduler_status", lambda: "ready")
 
 
 def assert_contract(name: str, payload: dict) -> None:
@@ -40,6 +46,7 @@ def ready_checks() -> dict[str, str]:
         "s3": "ready",
         "keycloak": "ready",
         "worker": "ready",
+        "scheduler": "ready",
     }
 
 
@@ -356,6 +363,108 @@ def test_postgres_probe_applies_connect_and_statement_timeouts(monkeypatch):
     assert main._postgres_status() == "ready"
     assert observed["kwargs"]["connect_timeout"] == 2
     assert observed["kwargs"]["options"] == "-c statement_timeout=2000"
+
+
+@pytest.mark.parametrize(
+    ("lease_row", "expected"),
+    [
+        pytest.param((True,), "ready", id="live-lease"),
+        pytest.param((False,), "lease_inactive", id="scheduler-absent-or-lease-expired"),
+        pytest.param(None, "unavailable", id="malformed-sql-result"),
+        pytest.param((1,), "unavailable", id="non-boolean-sql-result"),
+    ],
+)
+def test_scheduler_probe_requires_live_database_lease(monkeypatch, lease_row, expected):
+    observed = {}
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query):
+            observed.setdefault("queries", []).append(query)
+            if "current_database()" in query:
+                return QueryResult(("eid_local_dev", "eid_api", main.settings.environment_marker))
+            assert query == "SELECT eid_task_scheduler_ready_v2()"
+            return QueryResult(lease_row)
+
+    def connect(*args, **kwargs):
+        observed["args"] = args
+        observed["kwargs"] = kwargs
+        return Connection()
+
+    monkeypatch.setattr(main.psycopg, "connect", connect)
+
+    assert REAL_SCHEDULER_STATUS() == expected
+    assert observed["args"] == (main.settings.database_url,)
+    assert observed["kwargs"] == {
+        "connect_timeout": 2,
+        "options": "-c statement_timeout=2000",
+    }
+    assert observed["queries"][-1] == "SELECT eid_task_scheduler_ready_v2()"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (main.psycopg.errors.UndefinedFunction("scheduler function missing"), "marker_schema_or_privilege_mismatch"),
+        (main.psycopg.errors.InsufficientPrivilege("scheduler function denied"), "marker_schema_or_privilege_mismatch"),
+        (main.psycopg.OperationalError("scheduler query failed"), "unavailable"),
+    ],
+)
+def test_scheduler_probe_fails_closed_on_sql_error(monkeypatch, error, expected):
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query):
+            if "current_database()" in query:
+                return QueryResult(("eid_local_dev", "eid_api", main.settings.environment_marker))
+            assert query == "SELECT eid_task_scheduler_ready_v2()"
+            raise error
+
+    monkeypatch.setattr(main.psycopg, "connect", lambda *_args, **_kwargs: Connection())
+
+    assert REAL_SCHEDULER_STATUS() == expected
+
+
+def test_scheduler_probe_rejects_wrong_live_database_before_sql_function(monkeypatch):
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query):
+            assert "current_database()" in query
+            return QueryResult(("foreign", "eid_api", main.settings.environment_marker))
+
+    monkeypatch.setattr(main.psycopg, "connect", lambda *_args, **_kwargs: Connection())
+
+    assert REAL_SCHEDULER_STATUS() == "marker_schema_or_privilege_mismatch"
+
+
+@pytest.mark.parametrize("scheduler_status", ["lease_inactive", "unavailable"])
+def test_scheduler_failure_degrades_api_readiness_separately(monkeypatch, scheduler_status):
+    for name in ("postgres", "redis", "rabbitmq", "s3", "keycloak", "worker"):
+        monkeypatch.setattr(main, f"_{name}_status", lambda: "ready")
+    monkeypatch.setattr(main, "_scheduler_status", lambda: scheduler_status)
+
+    response = CLIENT.get("/health/ready")
+
+    assert response.status_code == 503
+    checks = response.json()["error"]["details"]["checks"]
+    assert tuple(checks) == main.READINESS_PROBE_NAMES
+    assert checks["scheduler"] == scheduler_status
+    assert checks["postgres"] == checks["worker"] == "ready"
+    assert_contract("error.schema.json", response.json())
 
 
 @pytest.mark.parametrize(

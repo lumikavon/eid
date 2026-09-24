@@ -34,16 +34,16 @@ def _runtime_fixture(
         "source_fingerprint_algorithm": "sha256",
         "services": {
             service: {
-                "image_ref": f"eid-local-{service}:0.1.0",
-                "image_id": f"sha256:{service:0<64}"[:71],
+                "image_ref": f"eid-local-{'worker' if service == 'worker-scheduler' else service}:0.1.0",
+                "image_id": f"sha256:{'worker' if service == 'worker-scheduler' else service:0<64}"[:71],
                 "container_id": (
                     "different-container"
                     if manifest_mismatch and service == "api"
                     else container_ids[service]
                 ),
-                "source_fingerprint": f"sha256:{service:0<64}"[:71],
+                "source_fingerprint": f"sha256:{'worker' if service == 'worker-scheduler' else service:0<64}"[:71],
             }
-            for service in ("api", "worker", "web")
+            for service in ("api", "worker", "worker-scheduler", "web")
         },
     }
     runtime_verifications = 0
@@ -153,7 +153,7 @@ def test_scan_rejects_token_field_case_variants(monkeypatch, field):
     assert report["services"]["api"]["matches"]["token_value"] == 1
 
 
-def test_scan_clean_owned_nine_service_runtime_passes(monkeypatch):
+def test_scan_clean_owned_ten_service_runtime_passes(monkeypatch):
     container_ids = _runtime_fixture(monkeypatch)
 
     report = verify_runtime_logs.scan_runtime_logs()
@@ -179,7 +179,7 @@ def test_every_service_scans_full_history_through_one_declared_utc_cutoff(monkey
         return original(args, **kwargs)
     monkeypatch.setattr(verify_runtime_logs.subprocess, "run", run)
     report = verify_runtime_logs.scan_runtime_logs()
-    assert len(commands) == 9
+    assert len(commands) == len(verify_runtime_logs.EXPECTED_SERVICES)
     assert now.call_count == 1
     assert report["log_cutoff_utc"] == cutoff.isoformat()
     assert all(args[1:4] == ["logs", "--until", report["log_cutoff_utc"]] for args in commands)

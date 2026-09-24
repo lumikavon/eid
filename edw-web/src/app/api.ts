@@ -10,7 +10,7 @@ export const isWorkspaceForbidden=(error:unknown):error is AccountRequestError=>
 export const REQUEST_TIMEOUT_MS=8000;
 const MAX_READINESS_BODY_BYTES=64*1024;
 const MAX_ACCOUNT_BODY_BYTES=64*1024;
-const readinessChecks=['postgres','redis','rabbitmq','s3','keycloak','worker'] as const;
+const readinessChecks=['postgres','redis','rabbitmq','s3','keycloak','worker','scheduler'] as const;
 type ReadinessCheck=typeof readinessChecks[number];
 
 const readinessReasons:Record<ReadinessCheck,Record<string,string>>={
@@ -39,6 +39,7 @@ const readinessReasons:Record<ReadinessCheck,Record<string,string>>={
     audience_mapper_mismatch:'身份服务 audience 映射配置不匹配，请检查 Keycloak 协议映射器配置',
   },
   worker:{unavailable:'后台任务服务无法连接，请检查 Worker 与消息队列连接',timeout:'后台任务检查超时，请检查 Worker 是否阻塞'},
+  scheduler:{unavailable:'任务调度器无法连接，请检查调度服务',timeout:'任务调度器检查超时，请检查调度服务是否阻塞',marker_schema_or_privilege_mismatch:'任务调度器环境、结构或读取权限不匹配，请检查迁移与授权',lease_inactive:'任务调度器租约未激活，请检查调度服务状态'},
 };
 
 const isPlainObject=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&(Object.getPrototypeOf(value)===Object.prototype||Object.getPrototypeOf(value)===null);

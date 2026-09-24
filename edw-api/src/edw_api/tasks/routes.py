@@ -51,4 +51,11 @@ def create_router(settings, verify):
         with database() as conn:
             return ResultResponse(data=repository.result(conn, current.subject, workspace_id, task_id))
 
+    @router.post("/{task_id}/cancel", status_code=202, response_model=TaskResponse)
+    def cancel(workspace_id: UUID, task_id: UUID, request: Request, current=Depends(actor)):
+        with database() as conn:
+            response = TaskResponse(data=repository.cancel(
+                conn, current.subject, workspace_id, task_id, request.state.request_id))
+        return response
+
     return router

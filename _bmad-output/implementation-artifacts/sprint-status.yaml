@@ -84,7 +84,7 @@ development_status:
   1-2-current-access: done
   1-3-workspace-discovery: done # software/static-only; actual environment verification cancelled by user, not verified
   1-4-durable-submission: done # software gate and source review; PG/RabbitMQ/ACK runtime not-run
-  1-5-fenced-recovery: backlog
+  1-5-fenced-recovery: done # 用户限定软件门禁关闭；测试/迁移/DB/Broker/ACK 运行验收 not-run
   1-6-task-observation: backlog
   epic-1-retrospective: optional
 

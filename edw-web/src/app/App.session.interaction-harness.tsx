@@ -36,7 +36,7 @@ window.fetch=async(input,init={})=>{
  let body:unknown;
  if(stage==='account')body={data:account};
  else if(stage==='workspace')body={data:workspace};
- else if(path==='/health/ready')body={status:'ready',checks:Object.fromEntries(['postgres','redis','rabbitmq','s3','keycloak','worker'].map(name=>[name,'ready']))};
+ else if(path==='/health/ready')body={status:'ready',checks:Object.fromEntries(['postgres','redis','rabbitmq','s3','keycloak','worker','scheduler'].map(name=>[name,'ready']))};
  else if(path===`/api/v1/workspaces/${workspaceId}/discovery`)body={data:{items:[item],total_count:1,next_cursor:null,context,storage}};
  else{unexpected.push(path);throw new Error(`Unexpected local request: ${path}`)}
  return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});

@@ -34,7 +34,7 @@ class Connection:
     def __init__(
         self,
         marker: str,
-        revision: str | list[tuple[str]] = "0008_durable_submission",
+        revision: str | list[tuple[str]] = "0009_fenced_recovery",
         user: str = "eid_worker",
         database: str = "eid_local_dev",
     ):
@@ -79,7 +79,7 @@ def configure_non_database_dependencies(monkeypatch):
     monkeypatch.setattr(worker_app.boto3, "client", lambda *_args, **_kwargs: S3Client())
     monkeypatch.setenv("EID_DATABASE_URL", "postgresql://worker@postgres/eid_local_dev")
     monkeypatch.setenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    monkeypatch.setenv("EID_REQUIRED_SCHEMA_REVISION", "0008_durable_submission")
+    monkeypatch.setenv("EID_REQUIRED_SCHEMA_REVISION", "0009_fenced_recovery")
     monkeypatch.setenv("EID_REDIS_URL", "redis://redis:6379/0")
     monkeypatch.setenv("EID_S3_ENDPOINT_URL", "http://seaweedfs:8333")
     monkeypatch.setenv("EID_S3_ACCESS_KEY", "eid-s3-worker")
@@ -94,7 +94,7 @@ def test_worker_dependency_gate_accepts_exact_marker_and_revision(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0008_durable_submission",
+            "0009_fenced_recovery",
         ),
     )
 
@@ -181,7 +181,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     monkeypatch.setattr(worker_app, "_RELAY_READY", relay_ready)
     database = {
         "marker": "eid-local-dev-v1",
-        "revision": "0008_durable_submission",
+        "revision": "0009_fenced_recovery",
     }
     monkeypatch.setattr(
         worker_app.psycopg,
@@ -192,7 +192,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
     database["revision"] = "0000_stale"
     assert worker_app.dependency_readiness(None) == {"status": "unavailable"}
-    database["revision"] = "0008_durable_submission"
+    database["revision"] = "0009_fenced_recovery"
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
 
 
@@ -215,7 +215,7 @@ def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
 @pytest.mark.parametrize(
     ("marker", "revision", "message"),
     [
-        ("foreign-environment", "0008_durable_submission", "environment marker"),
+        ("foreign-environment", "0009_fenced_recovery", "environment marker"),
         ("eid-local-dev-v1", "0000_stale", "schema revision"),
     ],
 )
@@ -251,7 +251,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     configure_non_database_dependencies(monkeypatch)
     connection = Connection(
         "eid-local-dev-v1",
-        "0008_durable_submission",
+        "0009_fenced_recovery",
         user=user,
         database=database,
     )
@@ -273,7 +273,8 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
         [],
         [("0000_stale",)],
         [("0007_workspace_discovery",)],
-        [("0008_durable_submission",), ("0002_divergent",)],
+        [("0008_durable_submission",)],
+        [("0009_fenced_recovery",), ("0002_divergent",)],
     ],
 )
 def test_worker_dependency_gate_requires_exactly_one_expected_revision(
@@ -298,7 +299,7 @@ def test_worker_dependency_gate_rejects_redis_failure(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0008_durable_submission",
+            "0009_fenced_recovery",
         ),
     )
     monkeypatch.setattr(
@@ -318,7 +319,7 @@ def test_worker_dependency_gate_rejects_s3_client_error(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0008_durable_submission",
+            "0009_fenced_recovery",
         ),
     )
 
@@ -344,7 +345,7 @@ def test_worker_dependency_clients_close_after_success(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0008_durable_submission",
+            "0009_fenced_recovery",
         ),
     )
 

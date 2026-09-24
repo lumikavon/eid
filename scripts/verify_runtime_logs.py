@@ -18,6 +18,7 @@ EXPECTED_SERVICES = (
     "seaweedfs",
     "api",
     "worker",
+    "worker-scheduler",
     "web",
     "nginx",
 )
@@ -100,9 +101,11 @@ def scan_runtime_logs() -> dict:
             containers = _owned_service_containers(state["nonce"])
             runtime_images = image_check.result()
     recorded_services = runtime_images["services"]
+    if set(containers) != set(EXPECTED_SERVICES) or set(recorded_services) != set(EXPECTED_SERVICES):
+        raise RuntimeError("Runtime log service inventory does not match Compose")
     if any(
         recorded_services[service]["container_id"] != containers[service]
-        for service in (EXPECTED_SERVICES if config is not None else ("api", "worker", "web"))
+        for service in EXPECTED_SERVICES
     ):
         raise RuntimeError("Runtime image manifest does not match scanned containers")
     credential_values = sorted(set(LOCAL_CREDENTIALS.values()), key=lambda value: (-len(value), value))

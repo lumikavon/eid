@@ -20,6 +20,14 @@ def relay_snapshot(envelope):
             "envelope": envelope, "envelope_hash": payload_hash(envelope)}
 
 
+def claimed_reply(envelope):
+    return {"status": "claimed", "task_id": envelope["task_id"],
+            "attempt": 1, "fence_token": 1}
+
+
+STAGED_CONTENT_HASH = "a" * 64
+
+
 def test_relay_publishes_only_after_claim_returns_and_confirms_after_publish(monkeypatch, envelope):
     calls = []
 
@@ -187,14 +195,14 @@ def test_false_confirmation_after_publish_is_pending(monkeypatch, envelope):
 @pytest.mark.parametrize("status", ["processed", "quarantined"])
 def test_duplicate_or_quarantined_message_never_completes_again(monkeypatch, envelope, status):
     calls = []
-    monkeypatch.setattr(inventory, "call", lambda sql, args: calls.append(sql) or status)
+    monkeypatch.setattr(inventory, "call", lambda sql, args: calls.append(sql) or {"status": status})
     assert inventory.consume(envelope) == status
-    assert len(calls) == 1 and "claim" in calls[0]
+    assert len(calls) == 1 and "eid_task_claim_v2" in calls[0]
 
 
 @pytest.mark.parametrize("status", ["busy", "unexpected"])
 def test_received_busy_rejects_delivery_without_hot_requeue(monkeypatch, envelope, status):
-    monkeypatch.setattr(inventory, "call", lambda *_: status)
+    monkeypatch.setattr(inventory, "call", lambda *_: {"status": status})
     with pytest.raises(Reject) as error:
         inventory.consume(envelope)
     assert error.value.requeue is False
@@ -204,21 +212,43 @@ def test_success_requires_completion_transaction_return(monkeypatch, envelope):
     calls = []
     def call(sql, args):
         calls.append((sql, args))
-        return "claimed" if "claim" in sql else "SUCCEEDED"
+        if "claim_v2" in sql:
+            return claimed_reply(envelope)
+        if "heartbeat_v2" in sql:
+            return {"status": "renewed"}
+        if "stage_inventory_v2" in sql:
+            return {"status": "staged", "content_hash": STAGED_CONTENT_HASH}
+        assert "finish_inventory_v2" in sql
+        return {"status": "SUCCEEDED"}
     monkeypatch.setattr(inventory, "call", call)
     assert inventory.consume(envelope) == "SUCCEEDED"
-    assert "finish_inventory" in calls[1][0]
-    assert calls[0][1][-1] == calls[1][1][-1]
+    assert [sql.split("eid_task_")[1].split("(")[0] for sql, _ in calls] == [
+        "claim_v2", "heartbeat_v2", "stage_inventory_v2",
+        "heartbeat_v2", "finish_inventory_v2"]
+    event_id, body, digest, owner = calls[0][1]
+    assert str(event_id) == envelope["event_id"]
+    assert body.obj == envelope
+    assert digest == payload_hash(envelope)
+    assert all(args == (event_id, owner, 1) for _, args in calls[1:4])
+    assert calls[4][1] == (event_id, owner, 1, envelope["input_hash"], STAGED_CONTENT_HASH)
 
 
 def test_failed_completion_does_not_ack_success(monkeypatch, envelope):
+    calls = []
     def call(sql, args):
-        if "claim" in sql:
-            return "claimed"
+        calls.append(sql)
+        if "claim_v2" in sql:
+            return claimed_reply(envelope)
+        if "heartbeat_v2" in sql:
+            return {"status": "renewed"}
+        if "stage_inventory_v2" in sql:
+            return {"status": "staged", "content_hash": STAGED_CONTENT_HASH}
+        assert "finish_inventory_v2" in sql
         raise RuntimeError("commit failed")
     monkeypatch.setattr(inventory, "call", call)
     with pytest.raises(RuntimeError, match="commit failed"):
         inventory.consume(envelope)
+    assert len(calls) == 5 and "finish_inventory_v2" in calls[-1]
 
 
 def test_unknown_version_is_durable_diagnostic_without_execution(monkeypatch, envelope):
@@ -245,18 +275,51 @@ def test_authorization_block_is_acknowledged_only_after_terminal_transaction(mon
 
     def call(sql, args):
         calls.append(sql)
-        return "claimed" if "claim" in sql else "BLOCKED"
+        assert "claim_v2" in sql
+        return {"status": "blocked"}
 
     monkeypatch.setattr(inventory, "call", call)
-    assert inventory.consume(envelope) == "BLOCKED"
-    assert len(calls) == 2 and "finish_inventory" in calls[1]
+    assert inventory.consume(envelope) == "blocked"
+    assert len(calls) == 1 and "claim_v2" in calls[0]
+
+
+def test_stage_authorization_failure_returns_only_after_terminal_transaction(monkeypatch, envelope):
+    calls = []
+
+    def call(sql, args):
+        calls.append(sql)
+        if "claim_v2" in sql:
+            return claimed_reply(envelope)
+        if "heartbeat_v2" in sql:
+            return {"status": "renewed"}
+        if "stage_inventory_v2" in sql:
+            return {"status": "authorization_denied"}
+        assert "fail_v2" in sql
+        assert args[3] == "authorization_denied"
+        return {"status": "FAILED"}
+
+    monkeypatch.setattr(inventory, "call", call)
+    assert inventory.consume(envelope) == "FAILED"
+    assert len(calls) == 4 and "fail_v2" in calls[-1]
 
 
 def test_lost_completion_never_acknowledges_a_result(monkeypatch, envelope):
-    monkeypatch.setattr(inventory, "call", lambda sql, args: "claimed" if "claim" in sql else "lost")
+    calls = []
+    def call(sql, args):
+        calls.append(sql)
+        if "claim_v2" in sql:
+            return claimed_reply(envelope)
+        if "heartbeat_v2" in sql:
+            return {"status": "renewed"}
+        if "stage_inventory_v2" in sql:
+            return {"status": "staged", "content_hash": STAGED_CONTENT_HASH}
+        assert "finish_inventory_v2" in sql
+        return {"status": "lost"}
+    monkeypatch.setattr(inventory, "call", call)
     with pytest.raises(Reject) as error:
         inventory.consume(envelope)
     assert error.value.requeue is False
+    assert len(calls) == 5 and "finish_inventory_v2" in calls[-1]
 
 
 def test_claim_keeps_numeric_representation_so_rogue_body_cannot_quarantine_storage(monkeypatch, envelope):
@@ -265,11 +328,11 @@ def test_claim_keeps_numeric_representation_so_rogue_body_cannot_quarantine_stor
 
     def call(sql, args):
         calls.append(sql)
-        assert "eid_task_claim" in sql
+        assert "eid_task_claim_v2" in sql
         assert isinstance(args[1].obj["aggregate_version"], float)
         assert args[2] == payload_hash(altered)
         assert args[2] != payload_hash(envelope)
-        return "quarantined"
+        return {"status": "quarantined"}
 
     monkeypatch.setattr(inventory, "call", call)
     assert inventory.consume(altered) == "quarantined"
@@ -277,11 +340,15 @@ def test_claim_keeps_numeric_representation_so_rogue_body_cannot_quarantine_stor
 
 
 def test_lease_expiry_exception_remains_pending_and_is_never_poison_ack(monkeypatch, envelope):
+    calls = []
     def call(sql, args):
-        if "claim" in sql:
-            return "claimed"
+        calls.append(sql)
+        if "claim_v2" in sql:
+            return claimed_reply(envelope)
+        assert "heartbeat_v2" in sql
         raise RuntimeError("Inventory lease expired")
 
     monkeypatch.setattr(inventory, "call", call)
     with pytest.raises(RuntimeError, match="Inventory lease expired"):
         inventory.consume(envelope)
+    assert len(calls) == 2 and "heartbeat_v2" in calls[-1]

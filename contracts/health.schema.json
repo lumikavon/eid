@@ -6,14 +6,15 @@
     "status": {"enum": ["live", "ready"]},
     "checks": {
       "type": "object",
-      "required": ["postgres", "redis", "rabbitmq", "s3", "keycloak", "worker"],
+      "required": ["postgres", "redis", "rabbitmq", "s3", "keycloak", "worker", "scheduler"],
       "properties": {
         "postgres": {"const": "ready"},
         "redis": {"const": "ready"},
         "rabbitmq": {"const": "ready"},
         "s3": {"const": "ready"},
         "keycloak": {"const": "ready"},
-        "worker": {"const": "ready"}
+        "worker": {"const": "ready"},
+        "scheduler": {"const": "ready"}
       },
       "additionalProperties": false
     }

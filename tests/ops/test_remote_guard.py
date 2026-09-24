@@ -242,19 +242,21 @@ def guard_state(config):
                 "HostPort": str(config["remote"]["ports"][name])}]
                 for name, (target, port) in remote.PORTS.items() if target == service},
             "networks": [project + "_default"], "network_mode": project + "_default",
-            "state": "running", "health": "healthy", "isolation_config": isolation_config(),
+            "state": "running", "health": None if service == "worker-scheduler" else "healthy",
+            "isolation_config": isolation_config(),
             "image_id": "sha256:" + "a" * 64,
             "referenced_image_id": "sha256:" + "a" * 64, "image_ref": definition["image"],
             "hostname": definition.get("hostname"),
             "rabbitmq_identity_env": [key + "=" + value
                 for key, value in definition.get("environment", {}).items()
                 if key in {"RABBITMQ_NODENAME", "RABBITMQ_MNESIA_DIR"}],
-            "image_labels": {"io.eid.source-fingerprint": guard.source_fingerprint(service)}
-                            if service in {"api", "worker", "web"} else {}})
+            "image_labels": {"io.eid.source-fingerprint":
+                             guard.source_fingerprint(remote.APPLICATION_IMAGES[service])}
+                            if service in remote.APPLICATION_IMAGES else {}})
         image_config = {"command": remote.configuration_digest(["image-default"]),
                         "entrypoint": remote.configuration_digest(["/entrypoint"]),
                         "environment": {"PATH": remote.configuration_digest("/usr/bin")},
-                        "user": "eid" if service in {"api", "worker"} else "",
+                        "user": "eid" if service in {"api", "worker", "worker-scheduler"} else "",
                         "healthcheck": None}
         state["containers"][-1]["image_runtime_config"] = image_config
         state["containers"][-1]["runtime_config"] = remote.candidate_runtime_config(definition, image_config)
@@ -374,7 +376,15 @@ def test_infrastructure_initialization_does_not_require_apps_but_runtime_does(co
     state["containers"] = [item for item in state["containers"]
         if item["labels"]["com.docker.compose.service"] in remote.VOLUME_SERVICES]
     assert set(remote.validate_guard_state(config, state, OWNER)) == remote.VOLUME_SERVICES
-    with pytest.raises(remote.RemoteEnvironmentError, match="nine-service"):
+    with pytest.raises(remote.RemoteEnvironmentError, match="ten-service"):
+        remote.validate_guard_state(config, state, OWNER, require_running=True)
+
+
+def test_historical_nine_service_inventory_cannot_pass_runtime_guard(config):
+    state = guard_state(config)
+    state["containers"] = [item for item in state["containers"]
+        if item["labels"]["com.docker.compose.service"] != "worker-scheduler"]
+    with pytest.raises(remote.RemoteEnvironmentError, match="ten-service"):
         remote.validate_guard_state(config, state, OWNER, require_running=True)
 
 
@@ -494,9 +504,11 @@ def collector_fixture(config, monkeypatch, filesystem_root=None):
         service = record["labels"]["com.docker.compose.service"]
         definition = compose["services"][service]
         image_id = "sha256:" + f"{index:064x}"
+        if service == "worker-scheduler":
+            image_id = images[compose["services"]["worker"]["image"]]["Id"]
         image_config = {"Cmd": ["image-default"], "Entrypoint": ["/entrypoint"],
                         "Env": ["PATH=/usr/bin"], "Labels": record["image_labels"],
-                        "User": "eid" if service in {"api", "worker"} else ""}
+                        "User": "eid" if service in {"api", "worker", "worker-scheduler"} else ""}
         actual = copy.deepcopy(image_config)
         actual.update(Image=record["image_ref"], Labels=record["labels"],
                       Hostname=definition.get("hostname", "fixture-host"),
@@ -517,7 +529,8 @@ def collector_fixture(config, monkeypatch, filesystem_root=None):
             "HostConfig": {"PortBindings": record["ports"], "NetworkMode": record["network_mode"],
                            **isolation_config()},
             "NetworkSettings": {"Networks": dict.fromkeys(record["networks"], {})},
-            "Mounts": record["mounts"], "State": {"Status": "running", "Health": {"Status": "healthy"}},
+            "Mounts": record["mounts"], "State": {"Status": "running",
+                **({} if service == "worker-scheduler" else {"Health": {"Status": "healthy"}})},
         }
         images[image_id] = images[record["image_ref"]] = {"Id": image_id, "Config": image_config}
     for volume in state["volumes"]:
@@ -808,7 +821,7 @@ def test_unrelated_bind_sibling_is_not_an_eid_attachment(config, monkeypatch):
                                         require_running=True)["isolation_verified"]
 
 
-@pytest.mark.parametrize("service", ["api", "worker", "web"])
+@pytest.mark.parametrize("service", ["api", "worker", "worker-scheduler", "web"])
 def test_runtime_path_rejects_stable_old_source_candidate(config, monkeypatch, service):
     fixture = collector_fixture(config, monkeypatch)
     record = fixture.containers[service + "-id"]
@@ -836,6 +849,11 @@ def test_runtime_path_preserves_image_defaults_and_redacts_configuration(config,
     install_runtime_io(config, monkeypatch, fixture.probe)
     manifest = remote.runtime_images(config)
     assert set(manifest["services"]) == remote.SERVICES
+    assert manifest["services"]["worker-scheduler"]["image_id"] == manifest["services"]["worker"]["image_id"]
+    assert manifest["services"]["worker-scheduler"]["source_fingerprint"] == (
+        manifest["services"]["worker"]["source_fingerprint"])
+    assert fixture.containers["worker-scheduler-id"]["Config"]["User"] == "eid"
+    assert "Health" not in fixture.containers["worker-scheduler-id"]["State"]
     assert all(len(record["runtime_config_sha256"]) == 64 for record in manifest["services"].values())
     serialized = json.dumps(manifest)
     assert "local-api-only" not in serialized and "/entrypoint" not in serialized

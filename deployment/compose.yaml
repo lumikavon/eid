@@ -7,7 +7,7 @@ x-runtime-environment: &runtime
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0008_durable_submission
+  EID_REQUIRED_SCHEMA_REVISION: 0009_fenced_recovery
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
@@ -112,6 +112,22 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+  worker-scheduler:
+    labels: *ownership
+    init: true
+    image: eid-local-worker:0.1.0
+    build:
+      context: ..
+      dockerfile: deployment/python.Dockerfile
+      args: {EID_SOURCE_FINGERPRINT: "${EID_WORKER_SOURCE_FINGERPRINT:?Capture source fingerprints before build}"}
+    command: ["python", "-m", "edw_worker", "scheduler"]
+    environment:
+      <<: *runtime
+      EID_DATABASE_URL: postgresql://eid_worker:local-worker-only@postgres:5432/eid_local_dev
+      EID_RABBITMQ_URL: amqp://eid_worker:local-worker-only@rabbitmq:5672/eid-local
+      EID_S3_ACCESS_KEY: eid-s3-worker
+      EID_S3_SECRET_KEY: local-s3-worker-read-only
+    depends_on: {api: {condition: service_started}}
   web:
     labels: *ownership
     image: eid-local-web:0.1.0

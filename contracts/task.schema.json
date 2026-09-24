@@ -304,8 +304,12 @@
           "enum": [
             "QUEUED",
             "RUNNING",
+            "RETRY_WAIT",
             "SUCCEEDED",
-            "BLOCKED"
+            "BLOCKED",
+            "FAILED",
+            "CANCELLED",
+            "DEAD_LETTER"
           ],
           "title": "State",
           "type": "string"
@@ -314,8 +318,12 @@
           "enum": [
             "waiting",
             "inventory",
+            "retry_wait",
             "done",
-            "blocked"
+            "blocked",
+            "failed",
+            "cancelled",
+            "dead_letter"
           ],
           "title": "Stage",
           "type": "string"
@@ -334,6 +342,13 @@
           "maximum": 9007199254740991,
           "minimum": 0,
           "title": "Attempt",
+          "type": "integer"
+        },
+        "fence_token": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Fence Token",
           "type": "integer"
         },
         "current_seq": {
@@ -365,7 +380,13 @@
               "enum": [
                 "AUTHORIZATION_EXPIRED_OR_REVOKED",
                 "DEPENDENCY_BLOCKED",
-                "INVALID_INVENTORY_INPUT"
+                "INVALID_INVENTORY_INPUT",
+                "TRANSIENT_DEPENDENCY",
+                "FORMAT_REPAIRABLE",
+                "LEASE_EXPIRED",
+                "ATTEMPTS_EXHAUSTED",
+                "CANCELLED_BY_ACTOR",
+                "OUTBOX_POISONED"
               ],
               "type": "string"
             },
@@ -374,6 +395,54 @@
             }
           ],
           "title": "Error"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "TRANSIENT",
+                "FORMAT",
+                "PERMANENT",
+                "LEASE_EXPIRED",
+                "ATTEMPTS_EXHAUSTED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Class"
+        },
+        "next_retry_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Retry At"
+        },
+        "cancel_requested": {
+          "default": false,
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "external_effect_state": {
+          "default": "none",
+          "enum": [
+            "none",
+            "receipt_pending",
+            "unknown",
+            "confirmed"
+          ],
+          "title": "External Effect State",
+          "type": "string"
         },
         "created_at": {
           "format": "date-time",

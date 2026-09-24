@@ -275,9 +275,9 @@ def test_real_collector_manifest_capture_and_log_scan_share_complete_contract(pr
     assert runtime.manifest == manifest
     result = log_gate.scan_runtime_logs()
     assert result["passed"] and result["runtime_images"] == manifest
-    assert len(fixture.commands) == 9
+    assert len(fixture.commands) == len(remote.SERVICES)
     assert all(command[3] == "logs" for command in fixture.commands)
-    assert fixture.observed["collect"] >= 10 and fixture.observed["operate"] == 9
+    assert fixture.observed["collect"] >= 10 and fixture.observed["operate"] == len(remote.SERVICES)
 
 
 @pytest.mark.parametrize("change", ["compose", "runtime", "manifest_compose", "manifest_runtime",

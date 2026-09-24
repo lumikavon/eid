@@ -81,10 +81,14 @@ def test_windows_excluded_port_rejected(config):
         remote.validate_config(config)
 
 
-def test_actual_compose_render_has_nine_services_and_isolated_names(config):
+def test_actual_compose_render_has_ten_services_and_isolated_names(config):
     files = remote.source_files(remote.ROOT)
     rendered = yaml.safe_load(remote.render_compose(config, OWNER, files))
     assert set(rendered["services"]) == remote.SERVICES
+    assert rendered["services"]["worker-scheduler"]["image"] == rendered["services"]["worker"]["image"]
+    assert rendered["services"]["worker-scheduler"]["build"]["args"]["EID_SOURCE_FINGERPRINT"] == (
+        rendered["services"]["worker"]["build"]["args"]["EID_SOURCE_FINGERPRINT"])
+    assert "healthcheck" not in rendered["services"]["worker-scheduler"]
     assert rendered["name"] == "eid-remote-dev"
     assert {value["name"] for value in rendered["volumes"].values()} == {
         "eid-remote-dev-postgres", "eid-remote-dev-seaweedfs", "eid-remote-dev-keycloak",
@@ -350,9 +354,9 @@ def test_unclaimed_empty_remote_can_be_inspected_but_missing_buildx_stays_blocke
         remote.validate_remote_state(config, clean_state(), require_running=True)
 
 
-def test_owned_nine_service_inventory_is_not_application_acceptance(config):
+def test_owned_ten_service_inventory_is_not_application_acceptance(config):
     result = remote.validate_remote_state(config, owned_state(config), OWNER, require_running=True)
-    assert len(result["services"]) == 9
+    assert len(result["services"]) == len(remote.SERVICES)
     assert result["runtime_verified"] is False
 
 

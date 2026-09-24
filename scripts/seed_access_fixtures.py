@@ -26,7 +26,9 @@ from scripts.verify_local_environment import (
 )
 
 FIXTURE_PASSWORD = "eid-local-access"
-SUPPORTED_FIXTURE_REVISIONS = ("0007_workspace_discovery", "0008_durable_submission")
+SUPPORTED_FIXTURE_REVISIONS = (
+    "0007_workspace_discovery", "0008_durable_submission", "0009_fenced_recovery"
+)
 
 
 @contextmanager
