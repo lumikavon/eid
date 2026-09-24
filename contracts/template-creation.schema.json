@@ -1,0 +1,765 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/template-creation.schema.json",
+  "title": "模板选择与文档创建契约",
+  "$defs": {
+    "TemplateFilters": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "enterprise",
+                "department",
+                "product_line",
+                "project",
+                "personal"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "technical_solution",
+                "bid",
+                "prd",
+                "test_plan",
+                "project_summary",
+                "technical_requirements",
+                "quality_outline",
+                "project_plan",
+                "functional_test_outline",
+                "performance_test_outline",
+                "production_form"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Type"
+        }
+      },
+      "title": "TemplateFilters",
+      "type": "object"
+    },
+    "CreateDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "knowledge_scope": {
+          "enum": [
+            "project_only",
+            "project_enterprise_quality",
+            "all_authorized"
+          ],
+          "title": "Knowledge Scope",
+          "type": "string"
+        },
+        "template_version_id": {
+          "format": "uuid",
+          "title": "Template Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "document_type",
+        "knowledge_scope",
+        "template_version_id"
+      ],
+      "title": "CreateDocument",
+      "type": "object"
+    },
+    "CreateDocumentAtWorkspace": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "knowledge_scope": {
+          "enum": [
+            "project_only",
+            "project_enterprise_quality",
+            "all_authorized"
+          ],
+          "title": "Knowledge Scope",
+          "type": "string"
+        },
+        "template_version_id": {
+          "format": "uuid",
+          "title": "Template Version Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "document_type",
+        "knowledge_scope",
+        "template_version_id",
+        "workspace_id"
+      ],
+      "title": "CreateDocumentAtWorkspace",
+      "type": "object"
+    },
+    "CreateDocumentFromTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "template_id": {
+          "format": "uuid",
+          "title": "Template Id",
+          "type": "string"
+        },
+        "knowledge_scope": {
+          "default": "project_only",
+          "enum": [
+            "project_only",
+            "project_enterprise_quality",
+            "all_authorized"
+          ],
+          "title": "Knowledge Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "title",
+        "document_type",
+        "template_id"
+      ],
+      "title": "CreateDocumentFromTemplate",
+      "type": "object"
+    },
+    "CatalogData": {
+      "additionalProperties": false,
+      "properties": {
+        "types": {
+          "items": {
+            "$ref": "#/$defs/TypeItem"
+          },
+          "title": "Types",
+          "type": "array"
+        },
+        "knowledge_scopes": {
+          "items": {
+            "$ref": "#/$defs/KnowledgeScopeItem"
+          },
+          "title": "Knowledge Scopes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "types",
+        "knowledge_scopes"
+      ],
+      "title": "CatalogData",
+      "type": "object"
+    },
+    "KnowledgeScopeItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "project_only",
+            "project_enterprise_quality",
+            "all_authorized"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "available"
+      ],
+      "title": "KnowledgeScopeItem",
+      "type": "object"
+    },
+    "TypeItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "workflow_state": {
+          "const": "catalog_only",
+          "default": "catalog_only",
+          "title": "Workflow State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "TypeItem",
+      "type": "object"
+    },
+    "CatalogResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CatalogData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CatalogResponse",
+      "type": "object"
+    },
+    "TemplateCard": {
+      "additionalProperties": false,
+      "properties": {
+        "template_id": {
+          "format": "uuid",
+          "title": "Template Id",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "enterprise",
+            "department",
+            "product_line",
+            "project",
+            "personal"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "version_label": {
+          "title": "Version Label",
+          "type": "string"
+        },
+        "development_only": {
+          "const": true,
+          "title": "Development Only",
+          "type": "boolean"
+        },
+        "outline": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Outline",
+          "type": "array"
+        }
+      },
+      "required": [
+        "template_id",
+        "version_id",
+        "name",
+        "description",
+        "scope",
+        "category",
+        "document_type",
+        "version_label",
+        "development_only",
+        "outline"
+      ],
+      "title": "TemplateCard",
+      "type": "object"
+    },
+    "TemplateListData": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TemplateCard"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "TemplateListData",
+      "type": "object"
+    },
+    "TemplateListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TemplateListData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "TemplateListResponse",
+      "type": "object"
+    },
+    "TemplateDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "template_id": {
+          "format": "uuid",
+          "title": "Template Id",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "enterprise",
+            "department",
+            "product_line",
+            "project",
+            "personal"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "version_label": {
+          "title": "Version Label",
+          "type": "string"
+        },
+        "development_only": {
+          "const": true,
+          "title": "Development Only",
+          "type": "boolean"
+        },
+        "outline": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Outline",
+          "type": "array"
+        },
+        "structure": {
+          "additionalProperties": true,
+          "title": "Structure",
+          "type": "object"
+        }
+      },
+      "required": [
+        "template_id",
+        "version_id",
+        "name",
+        "description",
+        "scope",
+        "category",
+        "document_type",
+        "version_label",
+        "development_only",
+        "outline",
+        "structure"
+      ],
+      "title": "TemplateDetail",
+      "type": "object"
+    },
+    "TemplateDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TemplateDetail"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "TemplateDetailResponse",
+      "type": "object"
+    },
+    "AstDocument": {
+      "additionalProperties": true,
+      "properties": {
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "sections": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "claims": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Claims",
+          "type": "array"
+        },
+        "citations": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "review_state": {
+          "additionalProperties": true,
+          "title": "Review State",
+          "type": "object"
+        }
+      },
+      "required": [
+        "metadata",
+        "sections",
+        "claims",
+        "citations",
+        "review_state"
+      ],
+      "title": "AstDocument",
+      "type": "object"
+    },
+    "DocumentData": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "technical_solution",
+            "bid",
+            "prd",
+            "test_plan",
+            "project_summary",
+            "technical_requirements",
+            "quality_outline",
+            "project_plan",
+            "functional_test_outline",
+            "performance_test_outline",
+            "production_form"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "knowledge_scope": {
+          "enum": [
+            "project_only",
+            "project_enterprise_quality",
+            "all_authorized"
+          ],
+          "title": "Knowledge Scope",
+          "type": "string"
+        },
+        "template_version_id": {
+          "format": "uuid",
+          "title": "Template Version Id",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "base_version_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Base Version Id"
+        },
+        "content_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "ast": {
+          "$ref": "#/$defs/DomainAst"
+        },
+        "replayed": {
+          "default": false,
+          "title": "Replayed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "workspace_id",
+        "name",
+        "document_type",
+        "knowledge_scope",
+        "template_version_id",
+        "version_id",
+        "base_version_id",
+        "content_hash",
+        "revision",
+        "ast"
+      ],
+      "title": "DocumentData",
+      "type": "object"
+    },
+    "DomainAst": {
+      "additionalProperties": true,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "document": {
+          "$ref": "#/$defs/AstDocument"
+        }
+      },
+      "required": [
+        "schema_version",
+        "document"
+      ],
+      "title": "DomainAst",
+      "type": "object"
+    },
+    "DocumentResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/DocumentData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DocumentResponse",
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/CatalogResponse"
+    },
+    {
+      "$ref": "#/$defs/TemplateListResponse"
+    },
+    {
+      "$ref": "#/$defs/TemplateDetailResponse"
+    },
+    {
+      "$ref": "#/$defs/DocumentResponse"
+    }
+  ]
+}

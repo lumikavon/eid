@@ -6,6 +6,8 @@ import {Account,AccountRequestError,getMe,getReadiness,isAuthenticationRejection
 import {getWorkspace,WorkspaceAccess} from './access-api';
 import AccessPanel from './AccessPanel';
 import DiscoveryPanel from '../features/workspace/DiscoveryPanel';
+import TemplateWorkspace from '../features/templates/TemplateWorkspace';
+import {TemplateError} from '../features/templates/template-api';
 import TaskCenter from '../features/tasks/TaskCenter';
 import {type TaskAction,forgetTaskAction,restoreTaskAction} from '../features/tasks/task-action';
 import {sameContext,validDiscoveryQuery} from './discovery-api';
@@ -18,7 +20,7 @@ const sideNav=['工作台','项目文档','知识管理','模板中心','审校�
 const unavailableMessage='此功能尚未开放';
 const validId=(id:string|undefined)=>id===undefined||/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const limitSearchText=(value:string)=>Array.from(value).slice(0,128).join('');
-const isAuthenticationFailure=(error:unknown):error is AccountRequestError|TaskError=>isAuthenticationRejection(error)||error instanceof TaskError&&error.failure==='authentication';
+const isAuthenticationFailure=(error:unknown):error is AccountRequestError|TaskError|TemplateError=>isAuthenticationRejection(error)||error instanceof TaskError&&error.failure==='authentication'||error instanceof TemplateError&&error.failure==='authentication';
 
 export default function App(){
  const route=useLocation();const navigate=useNavigate();const cache=useQueryClient();
@@ -26,9 +28,11 @@ export default function App(){
  const resourceId=/^\/workspaces\/[^/]+\/resources\/([^/]+)/.exec(route.pathname)?.[1]?.toLowerCase();
  const discoveryId=/^\/workspaces\/[^/]+\/records\/([^/]+)/.exec(route.pathname)?.[1]?.toLowerCase();
  const taskId=/^\/workspaces\/[^/]+\/tasks\/([^/]+)$/.exec(route.pathname)?.[1]?.toLowerCase();
+ const documentId=/^\/workspaces\/[^/]+\/documents\/([^/]+)$/.exec(route.pathname)?.[1]?.toLowerCase();
+ const templateRoute=Boolean(documentId)||/^\/workspaces\/[^/]+\/templates$/.test(route.pathname);
  const supportedRoute=['/','/auth/callback','/admin/members'].includes(route.pathname)
-   ||/^\/workspaces\/[^/]+\/(home|documents|favorites|references|recycle|search|project|projects|account|tasks|notifications|tasks\/[^/]+|resources\/[^/]+|records\/[^/]+)$/.test(route.pathname);
- const validIdentifiers=supportedRoute&&validId(routeWorkspace)&&validId(resourceId)&&validId(discoveryId)&&validId(taskId)&&(route.pathname==='/auth/callback'||validDiscoveryQuery(route.search));
+   ||/^\/workspaces\/[^/]+\/(home|documents|documents\/[^/]+|templates|favorites|references|recycle|search|project|projects|account|tasks|notifications|tasks\/[^/]+|resources\/[^/]+|records\/[^/]+)$/.test(route.pathname);
+ const validIdentifiers=supportedRoute&&validId(routeWorkspace)&&validId(resourceId)&&validId(discoveryId)&&validId(taskId)&&validId(documentId)&&(templateRoute?route.search==='':route.pathname==='/auth/callback'||validDiscoveryQuery(route.search));
  const [workspace,setWorkspace]=useState<WorkspaceAccess|null>(null);
  const [accessResult,setAccessResult]=useState('');
  const [account,setAccount]=useState<Account|null>(null);
@@ -55,7 +59,7 @@ export default function App(){
  const previousRouteWorkspace=useRef<string|undefined>(undefined);
  const clearTaskSession=useCallback((forget=true)=>{actionAbort.current?.abort();actionAbort.current=null;setTaskAction(null);setHasUnread(null);if(forget)forgetTaskAction()},[]);
  const clearControlled=useCallback(()=>{
-   for(const queryKey of [['access'],['discovery']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}
+   for(const queryKey of [['access'],['discovery'],['template-catalog'],['template-list'],['template-detail'],['template-document']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}
  },[cache]);
  const accountGeneration=useRef(0);
  const accountInFlight=useRef<number|null>(null);
@@ -201,8 +205,8 @@ export default function App(){
  const currentView=route.pathname.split('/')[3]??'home';
  const taskPage=currentView==='tasks'||currentView==='notifications';
  const go=(view:string)=>{if(visibleAccount)navigate(`${base}/${view}`)};
- const navAction=(index:number)=>{if(index===0)go('home');else if(index===1)go('documents');else if(index===2)go('references');else showToast(unavailableMessage)};
- const activeNav=currentView==='documents'||currentView==='records'?1:currentView==='references'?2:0;
+ const navAction=(index:number)=>{if(index===0)go('home');else if(index===1)go('documents');else if(index===2)go('references');else if(index===3)go('templates');else showToast(unavailableMessage)};
+ const activeNav=currentView==='documents'||currentView==='records'?1:currentView==='references'?2:currentView==='templates'?3:0;
  const accountState=<><b>工作区状态 · 本地测试环境</b><p data-testid="auth-status">{auth}</p><p data-testid="ready-status">{ready}</p>{error&&<p className="error" role="alert">{error}</p>}{!visibleAccount?(workspaceForbidden?<button className="btn" onClick={signOut}>安全退出</button>:hasSession?<button className="btn primary" onClick={refreshAccount}>重试账户加载</button>:<button className="btn primary" onClick={()=>void beginLogin().catch(e=>setError(e instanceof Error?e.message:'认证失败'))}>登录工作区</button>):<button className="btn" onClick={signOut}>安全退出</button>}</>;
  return <div className="app">
   <header className="topbar"><div className="brand"><span className="logo"/>企业智能文档编写工作台</div>
@@ -223,7 +227,7 @@ export default function App(){
    <div className="side-bottom"><div id="discovery-storage-slot">{(!visibleAccount||accountPage)&&<div className="storage storage-fallback"><div className="storage-fallback-content"><b>可见记录元数据占用</b><p>尚未统计</p><small>打开记录集合后显示；附件与总体配额未知。</small></div></div>}</div></div>
   </aside><main className="page active"><section className="workspace">
    {!visibleAccount?<><div className="hero"><h2>👋 欢迎进入安全工作区</h2><p>{workspaceForbidden?'当前账户无法进入此工作区。':'登录后才能进入工作区。'}</p></div><div className="notice">{accountState}</div></>:workspace&&workspace.workspace_id===visibleAccount.workspace_id?<>
-	    {accountPage?<><header className="page-header"><h1>项目与账户</h1><span className="grow"/><button className="btn" onClick={()=>go('home')}>返回工作台</button></header><div className="notice">{accountState}</div>{accessResult&&<p className="notice" role="status">{accessResult}</p>}<AccessPanel key={`${route.pathname}:${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onSaved={setAccessResult} resourceId={resourceId}/></>:taskPage?<TaskCenter key={taskScope} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onNotificationsChanged={()=>setNotificationRevision(value=>value+1)} action={taskAction?.scope===taskScope?taskAction:null} setAction={setTaskAction} actionAbort={actionAbort}/>:<><DiscoveryPanel key={`${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} search={search} onReject={rejectAccess} onRefresh={refreshAccount}/><details className="workspace-runtime"><summary>账户与运行状态</summary>{accountState}</details></>}
+	    {accountPage?<><header className="page-header"><h1>项目与账户</h1><span className="grow"/><button className="btn" onClick={()=>go('home')}>返回工作台</button></header><div className="notice">{accountState}</div>{accessResult&&<p className="notice" role="status">{accessResult}</p>}<AccessPanel key={`${route.pathname}:${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onSaved={setAccessResult} resourceId={resourceId}/></>:taskPage?<TaskCenter key={taskScope} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onNotificationsChanged={()=>setNotificationRevision(value=>value+1)} action={taskAction?.scope===taskScope?taskAction:null} setAction={setTaskAction} actionAbort={actionAbort}/>:currentView==='templates'||documentId?<TemplateWorkspace key={`${taskScope}:${documentId??'catalog'}`} current={workspace} documentId={documentId} onReject={rejectAccess} onRefresh={refreshAccount}/>:<><DiscoveryPanel key={`${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} search={search} onReject={rejectAccess} onRefresh={refreshAccount}/><details className="workspace-runtime"><summary>账户与运行状态</summary>{accountState}</details></>}
    </>:null}
   </section></main></div><div className={`toast${toast.shown?' show':''}`} role="status" aria-live="polite">{toast.message}</div><div className="mobile-note">建议在 1180px 以上桌面浏览器查看此原型。</div>
  </div>

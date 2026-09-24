@@ -27,6 +27,7 @@ from .access.repository import CURRENT_WORKSPACE_SQL, workspace_discovery_params
 from .errors import ApiError
 from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
+from .documents.routes import create_canonical_router, create_router as create_document_router
 from .tasks.routes import create_router as create_task_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
@@ -42,6 +43,8 @@ verifier = OidcVerifier(settings)
 app = FastAPI(title="EID API", version="0.1.0")
 app.include_router(create_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_document_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_canonical_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
 
@@ -211,7 +214,14 @@ def _postgres_status() -> str:
                            ('task_effect_intent','SELECT'), ('task_event','SELECT'),
                            ('task_event','INSERT'), ('task_notification','SELECT'),
                            ('task_observation_binding','SELECT'),
-                           ('task_outbox','INSERT')
+                           ('task_outbox','INSERT'),
+                           ('template','SELECT'), ('template_version','SELECT'),
+                           ('template_version_state','SELECT'), ('template_workspace','SELECT'),
+                           ('document_knowledge_scope_grant','SELECT'),
+                           ('document','SELECT'), ('document','INSERT'),
+                           ('document_version','SELECT'), ('document_version','INSERT'),
+                           ('document_creation_receipt','SELECT'),
+                           ('document_creation_receipt','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
                            privilege
@@ -240,6 +250,16 @@ def _postgres_status() -> str:
                     'eid_notification_mark_read_v1(uuid,uuid)', 'EXECUTE')
                 AND has_function_privilege(current_user,
                     'eid_task_bind_observation_v1(uuid,uuid,uuid[])', 'EXECUTE')
+                AND has_function_privilege(current_user,
+                    'eid_lock_document_knowledge_scope_v1(uuid,text)', 'EXECUTE')
+                AND has_function_privilege(current_user,
+                    'eid_lock_template_creation_v1(uuid,uuid)', 'EXECUTE')
+                AND NOT has_table_privilege(current_user,'template','UPDATE')
+                AND NOT has_table_privilege(current_user,'template_version_state','UPDATE')
+                AND NOT has_table_privilege(current_user,'template_workspace','UPDATE')
+                AND NOT has_table_privilege(current_user,'document_knowledge_scope_grant','UPDATE')
+                AND NOT has_table_privilege(current_user,'access_resource','INSERT')
+                AND NOT has_table_privilege(current_user,'discovery_record','INSERT')
                 AND NOT has_function_privilege(current_user,
                     'eid_task_cancel_v2(uuid,uuid,text)', 'EXECUTE')
                 AND NOT has_function_privilege(current_user,
@@ -247,6 +267,26 @@ def _postgres_status() -> str:
                 AND NOT has_function_privilege(current_user,
                     'eid_task_notification_v1()', 'EXECUTE')
                 AND NOT has_column_privilege(current_user,'discovery_record','lifecycle','UPDATE')
+                AND (SELECT bool_and(has_column_privilege(current_user, table_name,
+                                                          column_name, 'INSERT'))
+                     FROM (VALUES
+                       ('access_resource','id'),('access_resource','workspace_id'),
+                       ('access_resource','title'),('access_resource','kind'),
+                       ('access_resource','project_id'),('access_resource','customer_id'),
+                       ('access_resource','product_id'),('access_resource','department'),
+                       ('access_resource','owner_id'),('access_resource','classification'),
+                       ('access_resource','approval_state'),
+                       ('access_resource','publication_state'),
+                       ('access_resource','head_ref'),('access_resource','valid_from'),
+                       ('discovery_record','resource_id'),('discovery_record','kind'),
+                       ('discovery_record','created_by'),('discovery_record','created_at'),
+                       ('discovery_record','updated_at'),('discovery_record','document_type'),
+                       ('discovery_record','lifecycle'),('discovery_record','version_label'),
+                       ('discovery_record','visibility'),('discovery_record','revision')
+                     ) AS insert_columns(table_name,column_name))
+                AND NOT has_table_privilege('eid_worker','template_version','SELECT')
+                AND NOT has_table_privilege('eid_worker','document_version','SELECT')
+                AND NOT has_table_privilege('eid_worker','document','INSERT')
                 FROM resolved
                 """
             ).fetchone()[0]

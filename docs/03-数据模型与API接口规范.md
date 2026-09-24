@@ -286,28 +286,49 @@ closed
 
 ```http
 POST /api/v1/documents
+Authorization: Bearer <token>
+Idempotency-Key: <同一创建意图的稳定随机键>
+Content-Type: application/json
 ```
+
+创建命令必须携带 `Idempotency-Key`；旧版省略该请求头的示例不再是有效请求。`workspace_id`、`template_version_id` 均为 UUID；版本 ID 必须来自已授权模板卡片的 `version_id`，服务端会在首次创建提交时重新核验其当前可用性与权限。已有成功回执用同一幂等键重放时仍重新核验当前创建权限、文档读取权限、知识范围和模板可见性；模板在首次创建后废弃不撤销已成功创建的回执。请求中不携带角色或模板范围作为授权依据。
 
 Request：
 
 ```json
 {
-  "workspace_id": "ws-001",
+  "workspace_id": "35e81050-78e0-4c7e-b407-652748c628df",
   "document_type": "technical_solution",
-  "template_id": "tpl-tech-03",
-  "title": "云桌面系统总体技术方案"
+  "template_version_id": "f14052a0-29ba-4514-b621-e77cf47db922",
+  "name": "云桌面系统总体技术方案",
+  "knowledge_scope": "project_only"
 }
 ```
 
-Response：
+成功返回 `201 Created`。响应统一使用 `data` 包裹，不再使用旧版顶层 `id/status/current_version_id` 结构；`version_id` 是初始文档版本，`template_version_id` 固定所选模板版本。完整响应和 AST 字段以 `contracts/template-creation.schema.json` 为准。
+
+Response（字段示意，省略 AST 内部细节）：
 
 ```json
 {
-  "id": "doc-001",
-  "status": "DRAFT",
-  "current_version_id": "ver-001"
+  "data": {
+    "id": "77ee7dc1-60ef-4f29-a1f9-18bf4e2938bb",
+    "workspace_id": "35e81050-78e0-4c7e-b407-652748c628df",
+    "name": "云桌面系统总体技术方案",
+    "document_type": "technical_solution",
+    "knowledge_scope": "project_only",
+    "template_version_id": "f14052a0-29ba-4514-b621-e77cf47db922",
+    "version_id": "d9b85da8-b4d4-4c8c-b56d-efbb9c97386a",
+    "base_version_id": null,
+    "content_hash": "<初始 AST 的 SHA-256 十六进制值>",
+    "revision": 1,
+    "ast": {"schema_version": "1.0", "document": {"metadata": {}, "sections": [], "claims": [], "citations": [], "review_state": {}}},
+    "replayed": false
+  }
 }
 ```
+
+上述 AST 仅为结构示意，实际章节来自所选模板版本，不可按空章节示意写入。客户端也可使用 `POST /api/v1/workspaces/{workspace_id}/documents`，此时请求体省去 `workspace_id`，其余必填字段及幂等头不变。规范路径暂兼容旧形状的 `title + template_id`（模板家族 ID，服务端在提交时选择最新可用版本），该形状的 `knowledge_scope` 可省略、默认 `project_only`；`title` 与新形状的 `name` 均映射为文档名称。但旧形状**不能固定用户预览的版本**，新客户端必须使用以上显式 `template_version_id` 形状。模板卡片的 `version_id` 对应请求和文档的 `template_version_id`；文档响应的 `version_id` 则是新文档初始版本，不是模板版本。
 
 ### 8.2 生成文档计划
 

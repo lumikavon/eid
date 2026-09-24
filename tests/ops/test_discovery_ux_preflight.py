@@ -45,7 +45,7 @@ def validate(parts):
 
 
 @pytest.mark.parametrize("schema_head", ["0007_workspace_discovery", "0009_fenced_recovery",
-                                          "0010_task_observation"])
+                                          "0010_task_observation", "0011_template_creation"])
 def test_v2_plan_and_completion_bind_supported_creation_head(schema_head):
     parts = evidence(schema_head)
     assert validate(parts)["records"] == parts[3]["records"]
@@ -127,9 +127,13 @@ def test_missing_or_drifted_completion_is_rejected(change):
     ("0008_durable_submission", "0009_fenced_recovery", True),
     ("0009_fenced_recovery", "0010_task_observation", True),
     ("0010_task_observation", "0010_task_observation", True),
+    ("0010_task_observation", "0011_template_creation", True),
+    ("0011_template_creation", "0011_template_creation", True),
     ("0009_fenced_recovery", "0008_durable_submission", False),
     ("0010_task_observation", "0007_workspace_discovery", False),
+    ("0011_template_creation", "0010_task_observation", False),
     ("0011_future_revision", "0010_task_observation", False),
+    ("0012_unknown", "0011_template_creation", False),
     ("0007_workspace_discovery", "unknown_head", False),
 ])
 def test_receipt_revision_must_not_exceed_guarded_database(receipt_head, current_head, accepted):

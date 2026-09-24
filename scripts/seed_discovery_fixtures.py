@@ -18,7 +18,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from scripts.seed_access_fixtures import SUPPORTED_FIXTURE_REVISIONS, fixture_lock
+from scripts.seed_access_fixtures import SUPPORTED_FIXTURE_REVISIONS, fixture_lock, is_supported_fixture_head
 from scripts.verify_access_fixtures import preflight, read_document
 from scripts.verify_local_environment import (
     _recorded_owner_nonce, development_database_url, environment_state_directory,
@@ -172,7 +172,7 @@ def verify_connection(conn):
         "FROM pg_database WHERE datname=current_database()").fetchone()
     require(actual == expected, "Discovery fixture database boundary mismatch")
     revisions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    require(revisions in [[{"version_num": revision}] for revision in SUPPORTED_FIXTURE_REVISIONS],
+    require(is_supported_fixture_head(revisions),
             "Apply the guarded discovery migration before seeding")
     return revisions[0]["version_num"]
 

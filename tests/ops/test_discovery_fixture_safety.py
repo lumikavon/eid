@@ -306,7 +306,8 @@ def test_complete_receipt_drift_is_rejected_before_any_connection(monkeypatch, t
         fixtures.seed("safe")
 
 
-def test_0007_completion_receipt_is_preserved_when_current_schema_is_0010(monkeypatch, tmp_path):
+@pytest.mark.parametrize("current_head", ["0010_task_observation", "0011_template_creation"])
+def test_0007_completion_receipt_is_preserved_after_expand_migration(monkeypatch, tmp_path, current_head):
     conn = setup_seed(monkeypatch, tmp_path)
     first = fixtures.seed("safe")
     plan_path, completion_path = Path(first["receipt"]), Path(first["completion_receipt"])
@@ -319,20 +320,21 @@ def test_0007_completion_receipt_is_preserved_when_current_schema_is_0010(monkey
     completion["schema_version"] = 1
     completion_path.write_text(json.dumps(completion))
     original_plan, original_completion = plan_path.read_bytes(), completion_path.read_bytes()
-    conn.schema_head = "0010_task_observation"
+    conn.schema_head = current_head
     repeated = fixtures.seed("safe")
     assert repeated["created"] is False
     assert plan_path.read_bytes() == original_plan
     assert completion_path.read_bytes() == original_completion
 
 
-def test_new_0010_receipt_records_current_head_and_rejects_older_database(monkeypatch, tmp_path):
+@pytest.mark.parametrize("current_head", ["0010_task_observation", "0011_template_creation"])
+def test_new_receipt_records_current_head_and_rejects_older_database(monkeypatch, tmp_path, current_head):
     conn = setup_seed(monkeypatch, tmp_path)
-    conn.schema_head = "0010_task_observation"
+    conn.schema_head = current_head
     first = fixtures.seed("safe")
     completion_path = Path(first["completion_receipt"])
     original = completion_path.read_bytes()
-    assert json.loads(original)["schema_head"] == "0010_task_observation"
+    assert json.loads(original)["schema_head"] == current_head
     first_writes = list(conn.writes)
     conn.schema_head = "0007_workspace_discovery"
     with pytest.raises(RuntimeError, match="schema changed; seed a NEW run"):
@@ -379,8 +381,10 @@ def test_schema_advance_after_v2_plan_requires_new_run_before_data_transaction(m
     ([{"version_num": "0008_durable_submission"}], "0008_durable_submission"),
     ([{"version_num": "0009_fenced_recovery"}], "0009_fenced_recovery"),
     ([{"version_num": "0010_task_observation"}], "0010_task_observation"),
+    ([{"version_num": "0011_template_creation"}], "0011_template_creation"),
     ([], None),
     ([{"version_num": "unknown_head"}], None),
+    ([{"version_num": "0012_unknown"}], None),
     ([{"version_num": "0007_workspace_discovery"}, {"version_num": "0008_durable_submission"}], None),
 ])
 def test_schema_guard_accepts_only_one_supported_discovery_head(revisions, accepted):

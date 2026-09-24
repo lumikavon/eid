@@ -8,6 +8,18 @@ import pytest
 from scripts import seed_access_fixtures as fixtures
 
 
+@pytest.mark.parametrize("revision", ["0010_task_observation", "0011_template_creation"])
+def test_access_fixture_guard_accepts_current_migration_heads(revision):
+    assert fixtures.is_supported_fixture_head([{"version_num": revision}])
+
+
+@pytest.mark.parametrize("revisions", [[], [{"version_num": "0012_unknown"}],
+                                     [{"version_num": "0010_task_observation"},
+                                      {"version_num": "0011_template_creation"}]])
+def test_access_fixture_guard_rejects_invalid_migration_heads(revisions):
+    assert not fixtures.is_supported_fixture_head(revisions)
+
+
 def test_receipt_replace_failure_preserves_previous_complete_document(monkeypatch, tmp_path):
     receipt = tmp_path/"receipts.json"
     original = {"first": {"id": "one", "nonce": "owner"}}
