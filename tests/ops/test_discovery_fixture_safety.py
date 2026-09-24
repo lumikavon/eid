@@ -207,11 +207,13 @@ class SeedConnection(FakeRows):
     def __exit__(self, error, *_):
         if error:
             self.rows = self.before
-        else:
+        elif self.writes:
             self.committed = True
 
     def execute(self, query, params=()):
         query = query.as_string() if hasattr(query, "as_string") else query
+        if query == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY":
+            return Result([])
         if "FROM pg_database" in query:
             return Result([self.identity])
         if "FROM alembic_version" in query:
@@ -248,11 +250,17 @@ def setup_seed(monkeypatch, tmp_path):
 
 def test_seed_plan_precedes_transaction_and_second_run_never_resets(monkeypatch, tmp_path):
     conn = setup_seed(monkeypatch, tmp_path)
+    reads = []
     def connect(*_args, **_kwargs):
-        assert (tmp_path / "discovery-fixtures/safe.json").is_file()
+        plan_exists = (tmp_path / "discovery-fixtures/safe.json").is_file()
+        if "default_transaction_read_only=on" in _kwargs["options"]:
+            reads.append(plan_exists)
+        else:
+            assert plan_exists
         return conn
     monkeypatch.setattr(fixtures.psycopg, "connect", connect)
     result = fixtures.seed("safe")
+    assert reads[:2] == [False, True]
     assert result["created"] is True and conn.committed
     assert Path(result["completion_receipt"]).is_file()
     first_writes = len(conn.writes)
@@ -298,20 +306,79 @@ def test_complete_receipt_drift_is_rejected_before_any_connection(monkeypatch, t
         fixtures.seed("safe")
 
 
-def test_0007_completion_receipt_is_preserved_when_current_schema_is_0008(monkeypatch, tmp_path):
+def test_0007_completion_receipt_is_preserved_when_current_schema_is_0010(monkeypatch, tmp_path):
     conn = setup_seed(monkeypatch, tmp_path)
     first = fixtures.seed("safe")
-    completion_path = Path(first["completion_receipt"])
-    assert json.loads(completion_path.read_text())["schema_head"] == "0007_workspace_discovery"
-    conn.schema_head = "0008_durable_submission"
+    plan_path, completion_path = Path(first["receipt"]), Path(first["completion_receipt"])
+    # Represent an already existing v1 pair; the seeder must never upgrade its bytes.
+    plan = json.loads(plan_path.read_text())
+    plan["schema_version"] = 1
+    plan.pop("creation_schema_head")
+    plan_path.write_text(json.dumps(plan))
+    completion = json.loads(completion_path.read_text())
+    completion["schema_version"] = 1
+    completion_path.write_text(json.dumps(completion))
+    original_plan, original_completion = plan_path.read_bytes(), completion_path.read_bytes()
+    conn.schema_head = "0010_task_observation"
     repeated = fixtures.seed("safe")
     assert repeated["created"] is False
-    assert json.loads(completion_path.read_text())["schema_head"] == "0007_workspace_discovery"
+    assert plan_path.read_bytes() == original_plan
+    assert completion_path.read_bytes() == original_completion
+
+
+def test_new_0010_receipt_records_current_head_and_rejects_older_database(monkeypatch, tmp_path):
+    conn = setup_seed(monkeypatch, tmp_path)
+    conn.schema_head = "0010_task_observation"
+    first = fixtures.seed("safe")
+    completion_path = Path(first["completion_receipt"])
+    original = completion_path.read_bytes()
+    assert json.loads(original)["schema_head"] == "0010_task_observation"
+    first_writes = list(conn.writes)
+    conn.schema_head = "0007_workspace_discovery"
+    with pytest.raises(RuntimeError, match="schema changed; seed a NEW run"):
+        fixtures.seed("safe")
+    assert conn.writes == first_writes and completion_path.read_bytes() == original
+
+
+def test_v2_completion_head_changed_to_supported_revision_is_rejected(monkeypatch, tmp_path):
+    setup_seed(monkeypatch, tmp_path)
+    first = fixtures.seed("safe")
+    plan_path, completion_path = Path(first["receipt"]), Path(first["completion_receipt"])
+    original_plan = plan_path.read_bytes()
+    completion = json.loads(completion_path.read_text())
+    completion["schema_head"] = "0010_task_observation"
+    completion_path.write_text(json.dumps(completion))
+    changed_completion = completion_path.read_bytes()
+    monkeypatch.setattr(fixtures.psycopg, "connect", lambda *_a, **_k: pytest.fail("must reject before connect"))
+    with pytest.raises(RuntimeError, match="completion receipt drift"):
+        fixtures.seed("safe")
+    assert plan_path.read_bytes() == original_plan
+    assert completion_path.read_bytes() == changed_completion
+
+
+def test_schema_advance_after_v2_plan_requires_new_run_before_data_transaction(monkeypatch, tmp_path):
+    conn = setup_seed(monkeypatch, tmp_path)
+    read_checks = []
+    def connect(*_args, **kwargs):
+        assert "default_transaction_read_only=on" in kwargs["options"]
+        read_checks.append(True)
+        if len(read_checks) == 2:
+            assert (tmp_path / "discovery-fixtures/safe.json").is_file()
+            conn.schema_head = "0010_task_observation"
+        return conn
+    monkeypatch.setattr(fixtures.psycopg, "connect", connect)
+    with pytest.raises(RuntimeError, match="schema changed; seed a NEW run"):
+        fixtures.seed("safe")
+    assert len(read_checks) == 2 and not conn.writes and not conn.committed
+    assert (tmp_path / "discovery-fixtures/safe.json").is_file()
+    assert not (tmp_path / "discovery-fixtures/safe.committed.json").exists()
 
 
 @pytest.mark.parametrize("revisions,accepted", [
     ([{"version_num": "0007_workspace_discovery"}], "0007_workspace_discovery"),
     ([{"version_num": "0008_durable_submission"}], "0008_durable_submission"),
+    ([{"version_num": "0009_fenced_recovery"}], "0009_fenced_recovery"),
+    ([{"version_num": "0010_task_observation"}], "0010_task_observation"),
     ([], None),
     ([{"version_num": "unknown_head"}], None),
     ([{"version_num": "0007_workspace_discovery"}, {"version_num": "0008_durable_submission"}], None),

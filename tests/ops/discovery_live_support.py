@@ -50,6 +50,8 @@ class Store:
     declared: dict
     users: dict
     boundary: dict
+    run_id: str
+    schema_head: str
     retained_receipt: Path | None = None
 
     @property
@@ -92,10 +94,6 @@ def isolated_store(*, durable=False):
         assert not directory.is_symlink() and not directory.is_junction()
         directory.mkdir(exist_ok=True)
         receipt = directory / (schema + ".json")
-        fixture.write_new_document(receipt, {"schema": schema, "boundary": boundary,
-            "run_id": run_id, "users": users, "declaration": declared,
-            "definition_sha256": fixture.digest(declared), "schema_head": fixture.HEAD,
-            "retention": "Retain schema and all rows; no automatic drop/delete/reset"})
     engine = sa.create_engine(development_database_url("postgres"), poolclass=NullPool,
         connect_args={"connect_timeout": 3, "options": "-c statement_timeout=10000 -c lock_timeout=5000"})
     try:
@@ -118,11 +116,18 @@ def isolated_store(*, durable=False):
             conn = connection.connection.driver_connection
             conn.row_factory = dict_row
             try:
-                assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == fixture.HEAD
+                schema_head = conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"]
+                assert schema_head == scripts.get_current_head()
+                assert schema_head in fixture.SUPPORTED_FIXTURE_REVISIONS
                 populate(conn, declared, users)
                 marker = "eid-discovery-live:" + boundary["nonce"] + ":" + fixture.digest(declared)
                 conn.execute(sql.SQL("COMMENT ON SCHEMA {} IS {}").format(sql.Identifier(schema), sql.Literal(marker)))
-                store = Store(schema, conn, declared, users, boundary, receipt)
+                if durable:
+                    fixture.write_new_document(receipt, {"schema": schema, "boundary": boundary,
+                        "run_id": run_id, "users": users, "declaration": declared,
+                        "definition_sha256": fixture.digest(declared), "schema_head": schema_head,
+                        "retention": "Retain schema and all rows; no automatic drop/delete/reset"})
+                store = Store(schema, conn, declared, users, boundary, run_id, schema_head, receipt)
                 if durable:
                     assert fixture.selected_boundary() == boundary
                     verify_migration_target(development_database_url())
@@ -145,8 +150,11 @@ def fresh_connection(store, role="eid_api"):
     assert os.getenv("EID_RUN_LIVE_TESTS") == "1", "Explicit live-test opt-in required"
     assert store.retained_receipt is not None and fixture.selected_boundary() == store.boundary
     receipt = fixture.read_receipt(store.retained_receipt)
-    assert receipt["schema"] == store.schema and receipt["boundary"] == store.boundary
-    assert receipt["definition_sha256"] == fixture.digest(store.declared)
+    assert store.schema_head in fixture.SUPPORTED_FIXTURE_REVISIONS
+    assert receipt == {"schema": store.schema, "boundary": store.boundary,
+        "run_id": store.run_id, "users": store.users, "declaration": store.declared,
+        "definition_sha256": fixture.digest(store.declared), "schema_head": store.schema_head,
+        "retention": "Retain schema and all rows; no automatic drop/delete/reset"}
     completion = fixture.read_receipt(store.retained_receipt.with_suffix(".committed.json"))
     assert completion == {"schema": store.schema, "definition_sha256": fixture.digest(store.declared),
                           "boundary": store.boundary}
@@ -164,5 +172,5 @@ def fresh_connection(store, role="eid_api"):
         assert owned == {"owner": "eid_migrator", "marker": "eid-discovery-live:" + store.boundary["nonce"] + ":" + fixture.digest(store.declared)}
         conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(store.schema)))
         assert conn.execute("SELECT current_schema() AS name").fetchone()["name"] == store.schema
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [{"version_num": fixture.HEAD}]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [{"version_num": store.schema_head}]
         yield conn

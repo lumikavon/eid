@@ -14,7 +14,7 @@ NOW = datetime(2026, 9, 18, 12, tzinfo=timezone.utc)
 NONCE = "a" * 32
 
 
-def evidence():
+def evidence(schema_head=seed.HEAD):
     def identifier(label):
         return str(uuid5(NAMESPACE_URL, "eid-access-fixture:" + NONCE + ":" + label))
     users = {role: {"username": "eid-access-" + role.replace("_", "-"),
@@ -29,13 +29,13 @@ def evidence():
                 "remote_host": "172.27.0.38", "remote_root": "/opt/eid", "compose_project": "eid-remote-dev"}
     current = {"state_directory": boundary["state"], "nonce": NONCE, "fixtures": manifest}
     declared = seed.definition(NONCE, "ux-safe", users, NOW.isoformat())
-    plan = {"schema_version": 1, "fixture": "isolated-discovery-acceptance-only", "version": seed.VERSION,
+    plan = {"schema_version": 2, "fixture": "isolated-discovery-acceptance-only", "version": seed.VERSION,
             "run_id": "ux-safe", "created_at": NOW.isoformat(), "boundary": boundary,
             "users": users, "access_manifest_sha256": seed.digest(manifest),
             "identity_receipts_sha256": seed.digest(identities), "definition_sha256": seed.digest(declared),
-            **declared}
-    done = {"schema_version": 1, "run_id": "ux-safe", "definition_sha256": seed.digest(declared),
-            "boundary": boundary, "database": "eid_local_dev", "schema_head": seed.HEAD}
+            **declared, "creation_schema_head": schema_head}
+    done = {"schema_version": 2, "run_id": "ux-safe", "definition_sha256": seed.digest(declared),
+            "boundary": boundary, "database": "eid_local_dev", "schema_head": schema_head}
     # Independent documents, as they would be separately read from disk.
     return tuple(deepcopy(part) for part in (current, boundary, identities, plan, done))
 
@@ -44,9 +44,19 @@ def validate(parts):
     return guard.validate_evidence("ux-safe", *parts, NOW)
 
 
-def test_current_deterministic_receipts_are_accepted():
-    parts = evidence()
+@pytest.mark.parametrize("schema_head", ["0007_workspace_discovery", "0009_fenced_recovery",
+                                          "0010_task_observation"])
+def test_v2_plan_and_completion_bind_supported_creation_head(schema_head):
+    parts = evidence(schema_head)
     assert validate(parts)["records"] == parts[3]["records"]
+
+
+def test_legacy_v1_plan_and_completion_cannot_authorize_ux():
+    parts = evidence("0007_workspace_discovery")
+    parts[3]["schema_version"] = parts[4]["schema_version"] = 1
+    parts[3].pop("creation_schema_head")
+    with pytest.raises(RuntimeError, match="new v2 discovery plan"):
+        validate(parts)
 
 
 @pytest.mark.parametrize("field", ["definition_sha256", "access_manifest_sha256", "identity_receipts_sha256"])
@@ -101,13 +111,33 @@ def test_current_identity_receipt_nonce_cannot_be_replaced_by_plan_hash():
         validate(parts)
 
 
-@pytest.mark.parametrize("change", [{}, {"schema_head": "0006_api_write_only"}, {"database": "foreign"},
+@pytest.mark.parametrize("change", [{}, {"schema_head": "0006_api_write_only"},
+    {"schema_head": "0008_durable_submission"}, {"schema_head": "0011_future_revision"},
+    {"schema_head": "unknown_head"}, {"database": "foreign"},
     {"run_id": "different"}, {"extra": True}])
 def test_missing_or_drifted_completion_is_rejected(change):
     parts = list(evidence())
     parts[4] = parts[4] | change if change else {}
     with pytest.raises(RuntimeError, match="completion receipt"):
         validate(parts)
+
+
+@pytest.mark.parametrize("receipt_head,current_head,accepted", [
+    ("0007_workspace_discovery", "0010_task_observation", True),
+    ("0008_durable_submission", "0009_fenced_recovery", True),
+    ("0009_fenced_recovery", "0010_task_observation", True),
+    ("0010_task_observation", "0010_task_observation", True),
+    ("0009_fenced_recovery", "0008_durable_submission", False),
+    ("0010_task_observation", "0007_workspace_discovery", False),
+    ("0011_future_revision", "0010_task_observation", False),
+    ("0007_workspace_discovery", "unknown_head", False),
+])
+def test_receipt_revision_must_not_exceed_guarded_database(receipt_head, current_head, accepted):
+    if accepted:
+        guard.validate_receipt_revision(receipt_head, current_head)
+    else:
+        with pytest.raises(RuntimeError, match="schema revision|newer than"):
+            guard.validate_receipt_revision(receipt_head, current_head)
 
 
 @pytest.mark.parametrize("offset", [-1, 6 * 3600 + 1])

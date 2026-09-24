@@ -39,17 +39,30 @@ def validate_evidence(run_id, current, boundary, identities, plan, completion, n
     except (TypeError, ValueError):
         raise RuntimeError("Invalid discovery creation time") from None
     declared = seed.definition(boundary["nonce"], run_id, users, created_at)
-    expected = {"schema_version": 1, "fixture": "isolated-discovery-acceptance-only",
+    receipt_head = plan.get("creation_schema_head")
+    seed.require(receipt_head in seed.SUPPORTED_FIXTURE_REVISIONS,
+                 "A new v2 discovery plan with creation schema provenance is required")
+    expected = {"schema_version": 2, "fixture": "isolated-discovery-acceptance-only",
         "version": seed.VERSION, "run_id": run_id, "created_at": created_at, "boundary": boundary,
         "access_manifest_sha256": seed.digest(current["fixtures"]), "users": users,
         "identity_receipts_sha256": seed.digest(identities),
-        "definition_sha256": seed.digest(declared), **declared}
+        "definition_sha256": seed.digest(declared), **declared,
+        "creation_schema_head": receipt_head}
     seed.require(plan == expected, "Discovery plan differs from current deterministic provenance")
-    seed.require(completion == {"schema_version": 1, "run_id": run_id,
+    seed.require(completion == {"schema_version": 2, "run_id": run_id,
         "definition_sha256": seed.digest(declared), "boundary": boundary,
-        "database": "eid_local_dev", "schema_head": seed.HEAD},
+        "database": "eid_local_dev", "schema_head": receipt_head},
         "Missing or changed discovery completion receipt")
     return declared
+
+
+def validate_receipt_revision(receipt_head, current_revision):
+    """The guarded database may expand, but a receipt cannot name a newer schema."""
+    revisions = seed.SUPPORTED_FIXTURE_REVISIONS
+    seed.require(receipt_head in revisions and current_revision in revisions,
+                 "Unsupported discovery receipt or guarded database schema revision")
+    seed.require(revisions.index(receipt_head) <= revisions.index(current_revision),
+                 "Discovery completion receipt schema is newer than the guarded database")
 
 
 def verify_fresh_rows(conn, declared):
@@ -115,7 +128,8 @@ def hold_run(run_id):
                 connect_timeout=3, options="-c default_transaction_read_only=on "
                 "-c statement_timeout=5000 -c lock_timeout=2000") as conn:
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            seed.verify_connection(conn)
+            current_revision = seed.verify_connection(conn)
+            validate_receipt_revision(completion["schema_head"], current_revision)
             seed.verify_identities(conn, current["fixtures"]["users"])
             verify_fresh_rows(conn, declared)
         seed.require(seed.selected_boundary() == boundary

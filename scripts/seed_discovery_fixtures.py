@@ -177,6 +177,17 @@ def verify_connection(conn):
     return revisions[0]["version_num"]
 
 
+def guarded_schema_head(url, boundary):
+    """Pin a new plan to a read-only, guarded database observation."""
+    verify_migration_target(url)
+    require(selected_boundary() == boundary, "Discovery fixture boundary changed before schema check")
+    with psycopg.connect(url.replace("postgresql+psycopg:", "postgresql:"), row_factory=dict_row,
+            connect_timeout=3, options="-c default_transaction_read_only=on "
+            "-c statement_timeout=5000 -c lock_timeout=2000") as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        return verify_connection(conn)
+
+
 def verify_identities(conn, users):
     for role, user in users.items():
         row = conn.execute("SELECT id,subject,display_name,department,active FROM identity_account WHERE id=%s",
@@ -249,29 +260,47 @@ def seed(run_id):
         previous = read_receipt(plan_path) if plan_path.exists() else None
         created_at = previous["created_at"] if previous else datetime.now(timezone.utc).isoformat()
         declared = definition(boundary["nonce"], run_id, users, created_at)
-        receipt = {"schema_version": 1, "fixture": "isolated-discovery-acceptance-only",
+        url = development_database_url()
+        schema_version = previous.get("schema_version") if previous else 2
+        require(schema_version in (1, 2), "Unsupported discovery plan receipt version")
+        creation_head = None
+        if schema_version == 2:
+            creation_head = previous.get("creation_schema_head") if previous else guarded_schema_head(url, boundary)
+            require(creation_head in SUPPORTED_FIXTURE_REVISIONS,
+                    "Unsupported discovery plan creation schema revision")
+        receipt = {"schema_version": schema_version, "fixture": "isolated-discovery-acceptance-only",
             "version": VERSION, "run_id": run_id, "created_at": created_at, "boundary": boundary,
             "access_manifest_sha256": digest(current["fixtures"]), "users": users,
             "identity_receipts_sha256": digest(identity_receipts),
             "definition_sha256": digest(declared), **declared}
-        completion = {"schema_version": 1, "run_id": run_id, "definition_sha256": digest(declared),
+        if schema_version == 2:
+            receipt["creation_schema_head"] = creation_head
+        completion = {"schema_version": schema_version, "run_id": run_id, "definition_sha256": digest(declared),
                       "boundary": boundary, "database": "eid_local_dev"}
+        if schema_version == 2:
+            completion["schema_head"] = creation_head
         if done_path.exists():
             existing_completion = read_receipt(done_path)
-            require(existing_completion in [completion | {"schema_head": revision}
-                    for revision in SUPPORTED_FIXTURE_REVISIONS], "Discovery completion receipt drift")
+            expected_completions = ([completion | {"schema_head": revision}
+                for revision in SUPPORTED_FIXTURE_REVISIONS] if schema_version == 1 else [completion])
+            require(existing_completion in expected_completions, "Discovery completion receipt drift")
             completion = existing_completion
         require(previous is None or previous == receipt, "Discovery receipt drift; refusing overwrite")
         if previous is None:
             require(not done_path.exists(), "Completion receipt exists without an immutable plan")
             write_new_document(plan_path, receipt)
-        url = development_database_url()
+        if schema_version == 2:
+            require(guarded_schema_head(url, boundary) == creation_head,
+                    "Discovery plan schema changed; seed a NEW run")
         verify_migration_target(url)
         require(selected_boundary() == boundary, "Discovery fixture boundary changed before connect")
         with psycopg.connect(url.replace("postgresql+psycopg:", "postgresql:"), row_factory=dict_row,
                 connect_timeout=3, options="-c statement_timeout=5000 -c lock_timeout=2000") as conn:
             current_revision = verify_connection(conn)
-            if "schema_head" in completion:
+            if schema_version == 2:
+                require(current_revision == creation_head,
+                        "Discovery plan schema changed; seed a NEW run")
+            elif "schema_head" in completion:
                 # Preserve the original receipt across an explicitly supported expand migration.
                 require(SUPPORTED_FIXTURE_REVISIONS.index(completion["schema_head"])
                         <= SUPPORTED_FIXTURE_REVISIONS.index(current_revision),

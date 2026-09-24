@@ -204,3 +204,7 @@ Story 的 `done` 仅表示用户收窄后的软件交付完成：实现、独立
 - `_bmad-output/implementation-artifacts/story-1-3-validation.md`（历史证据与当前缺口）
 - `_bmad-output/implementation-artifacts/story-1-3-static-review-2026-09-21.md`（本轮修复、静态审查、编译与辅助模型意见）
 - 实现文件包括 `contracts/discovery.schema.json`、`migrations/versions/0007_workspace_discovery.py`、`edw-api/src/edw_api/discovery/`、`edw-web/src/app/discovery-api.ts`、`edw-web/src/features/workspace/` 及相应契约、安全、运维和 UX 测试源码。完整逐文件归属清单仍须在最终 Story 审查和提交前核定；不得将预存远端接入修改一并提交。
+
+## 2026-09-24 Epic 1 integration repair
+
+The schema-head compatibility defect in discovery fixture UX preflight and isolated live fixture source was repaired with a new v2 plan/completion binding. Historical v1 receipt bytes are retained; new UX acceptance requires a v2 run. See `story-1-3-schema-head-compatibility-2026-09-24.md` for the exact source finding, files, static checks, independent review, and `not-run` runtime boundary. Story status remains software-only `done`; no migration, test suite, service, or browser was run for this repair.
