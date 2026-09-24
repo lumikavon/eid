@@ -208,7 +208,9 @@ def _postgres_status() -> str:
                            ('task_dependency','SELECT'), ('task_dependency','INSERT'),
                            ('task_receipt','SELECT'), ('task_receipt','INSERT'),
                            ('task_result','SELECT'), ('task_attempt_stage','SELECT'),
-                           ('task_effect_intent','SELECT'), ('task_event','INSERT'),
+                           ('task_effect_intent','SELECT'), ('task_event','SELECT'),
+                           ('task_event','INSERT'), ('task_notification','SELECT'),
+                           ('task_observation_binding','SELECT'),
                            ('task_outbox','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
@@ -230,8 +232,20 @@ def _postgres_status() -> str:
                 AND NOT has_table_privilege(current_user,'durable_task','UPDATE')
                 AND NOT has_table_privilege(current_user,'task_attempt_stage','INSERT')
                 AND NOT has_table_privilege(current_user,'task_effect_intent','INSERT')
+                AND NOT has_table_privilege(current_user,'task_notification','INSERT')
+                AND NOT has_table_privilege(current_user,'task_notification','UPDATE')
                 AND has_function_privilege(current_user,
+                    'eid_task_cancel_observed_v1(uuid,uuid,text)', 'EXECUTE')
+                AND has_function_privilege(current_user,
+                    'eid_notification_mark_read_v1(uuid,uuid)', 'EXECUTE')
+                AND has_function_privilege(current_user,
+                    'eid_task_bind_observation_v1(uuid,uuid,uuid[])', 'EXECUTE')
+                AND NOT has_function_privilege(current_user,
                     'eid_task_cancel_v2(uuid,uuid,text)', 'EXECUTE')
+                AND NOT has_function_privilege(current_user,
+                    'eid_task_observation_allowed_v1(uuid,uuid)', 'EXECUTE')
+                AND NOT has_function_privilege(current_user,
+                    'eid_task_notification_v1()', 'EXECUTE')
                 AND NOT has_column_privilege(current_user,'discovery_record','lifecycle','UPDATE')
                 FROM resolved
                 """

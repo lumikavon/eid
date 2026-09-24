@@ -6,7 +6,10 @@ import {Account,AccountRequestError,getMe,getReadiness,isAuthenticationRejection
 import {getWorkspace,WorkspaceAccess} from './access-api';
 import AccessPanel from './AccessPanel';
 import DiscoveryPanel from '../features/workspace/DiscoveryPanel';
+import TaskCenter from '../features/tasks/TaskCenter';
+import {type TaskAction,forgetTaskAction,restoreTaskAction} from '../features/tasks/task-action';
 import {sameContext,validDiscoveryQuery} from './discovery-api';
+import {getUnreadNotification,TaskError} from './task-api';
 import './prototype.css';
 import './workspace.css';
 
@@ -15,15 +18,17 @@ const sideNav=['工作台','项目文档','知识管理','模板中心','审校�
 const unavailableMessage='此功能尚未开放';
 const validId=(id:string|undefined)=>id===undefined||/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const limitSearchText=(value:string)=>Array.from(value).slice(0,128).join('');
+const isAuthenticationFailure=(error:unknown):error is AccountRequestError|TaskError=>isAuthenticationRejection(error)||error instanceof TaskError&&error.failure==='authentication';
 
 export default function App(){
  const route=useLocation();const navigate=useNavigate();const cache=useQueryClient();
  const routeWorkspace=/^\/workspaces\/([^/]+)/.exec(route.pathname)?.[1]?.toLowerCase();
  const resourceId=/^\/workspaces\/[^/]+\/resources\/([^/]+)/.exec(route.pathname)?.[1]?.toLowerCase();
  const discoveryId=/^\/workspaces\/[^/]+\/records\/([^/]+)/.exec(route.pathname)?.[1]?.toLowerCase();
+ const taskId=/^\/workspaces\/[^/]+\/tasks\/([^/]+)$/.exec(route.pathname)?.[1]?.toLowerCase();
  const supportedRoute=['/','/auth/callback','/admin/members'].includes(route.pathname)
-   ||/^\/workspaces\/[^/]+\/(home|documents|favorites|references|recycle|search|project|projects|account|resources\/[^/]+|records\/[^/]+)$/.test(route.pathname);
- const validIdentifiers=supportedRoute&&validId(routeWorkspace)&&validId(resourceId)&&validId(discoveryId)&&(route.pathname==='/auth/callback'||validDiscoveryQuery(route.search));
+   ||/^\/workspaces\/[^/]+\/(home|documents|favorites|references|recycle|search|project|projects|account|tasks|notifications|tasks\/[^/]+|resources\/[^/]+|records\/[^/]+)$/.test(route.pathname);
+ const validIdentifiers=supportedRoute&&validId(routeWorkspace)&&validId(resourceId)&&validId(discoveryId)&&validId(taskId)&&(route.pathname==='/auth/callback'||validDiscoveryQuery(route.search));
  const [workspace,setWorkspace]=useState<WorkspaceAccess|null>(null);
  const [accessResult,setAccessResult]=useState('');
  const [account,setAccount]=useState<Account|null>(null);
@@ -32,6 +37,11 @@ export default function App(){
  const [error,setError]=useState('');
  const [workspaceForbidden,setWorkspaceForbidden]=useState(false);
  const [toast,setToast]=useState({message:'',shown:false});
+ const [taskAction,setTaskAction]=useState<TaskAction|null>(null);
+ const actionAbort=useRef<AbortController|null>(null);
+ const [hasUnread,setHasUnread]=useState<boolean|null>(null);
+ const unreadScope=useRef<string|null>(null);
+ const [notificationRevision,setNotificationRevision]=useState(0);
  const [searchText,setSearchText]=useState('');
  const [search,setSearch]=useState({query:'',sequence:0});
  const [searchInputKey,setSearchInputKey]=useState(0);
@@ -42,6 +52,8 @@ export default function App(){
    setSearchInputKey(key=>key+1);
  },[]);
  const currentContext=useRef<WorkspaceAccess|null>(null);
+ const previousRouteWorkspace=useRef<string|undefined>(undefined);
+ const clearTaskSession=useCallback((forget=true)=>{actionAbort.current?.abort();actionAbort.current=null;setTaskAction(null);setHasUnread(null);if(forget)forgetTaskAction()},[]);
  const clearControlled=useCallback(()=>{
    for(const queryKey of [['access'],['discovery']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}
  },[cache]);
@@ -63,7 +75,7 @@ export default function App(){
      }
      if(!isCurrentAccountLoad(generation))return;
      const currentToken=token();
-     if(!currentToken){setAccount(null);setWorkspace(null);currentContext.current=null;clearSearch();clearControlled();setAuth('需要登录');return}
+     if(!currentToken){setAccount(null);setWorkspace(null);currentContext.current=null;clearSearch();clearControlled();clearTaskSession(false);setAuth('需要登录');return}
      setAuth('正在载入当前账户');
      if(!validIdentifiers)throw new AccountRequestError('项目或资源地址无效','forbidden',403);
      let nextAccount=await getMe();
@@ -83,9 +95,11 @@ export default function App(){
      if(!isCurrentAccountLoad(generation)||token()!==currentToken)return;
      if(nextWorkspace.actor_id!==nextAccount.actor_id)throw new Error('身份上下文不一致');
      if(currentContext.current&&!sameContext(currentContext.current,nextWorkspace)){
-       clearControlled();clearSearch();setAccessResult('');
+       clearControlled();clearTaskSession();clearSearch();setAccessResult('');
      }
      currentContext.current=nextWorkspace;
+     const nextScope=[nextWorkspace.actor_id,nextWorkspace.workspace_id,...nextWorkspace.policy_epoch].join(':');
+     setTaskAction(old=>old?.scope===nextScope?old:restoreTaskAction(nextScope));
      accountRefreshBlocked.current=false;setWorkspaceForbidden(false);
      setWorkspace(nextWorkspace);
      setAccount({...nextAccount,workspace_id:nextWorkspace.workspace_id,workspace_name:nextWorkspace.name,workspace_slug:nextWorkspace.slug});setAuth('已安全登录');
@@ -94,12 +108,14 @@ export default function App(){
      if(!isCurrentAccountLoad(generation))return;
      setAccount(null);setAccessResult('');
      setWorkspace(null);currentContext.current=null;clearControlled();
-     if(isAuthenticationRejection(e)){
+     if(isAuthenticationFailure(e)){
+       clearTaskSession();
        clearSearch();
        accountGeneration.current+=1;
        accountRefreshBlocked.current=false;setWorkspaceForbidden(false);
        clearSession();setAuth('认证失败');setError(e.message);
      }else if(isWorkspaceForbidden(e)){
+       clearTaskSession();
        clearSearch();
        accountRefreshBlocked.current=true;setWorkspaceForbidden(true);
        setAuth('工作区访问被拒绝');setError(e.message);
@@ -109,19 +125,19 @@ export default function App(){
        setError(token()?`${message}；将自动重试，也可手动重试`:`${message}；请重新登录`);
      }
    }
- },[isCurrentAccountLoad,routeWorkspace,validIdentifiers,route.pathname,navigate,clearControlled,clearSearch]);
+ },[isCurrentAccountLoad,routeWorkspace,validIdentifiers,route.pathname,navigate,clearControlled,clearSearch,clearTaskSession]);
  const rejectAccess=useCallback((e:unknown)=>{
-   accountGeneration.current+=1;setAccount(null);setWorkspace(null);setAccessResult('');currentContext.current=null;clearSearch();clearControlled();
+   accountGeneration.current+=1;setAccount(null);setWorkspace(null);setAccessResult('');currentContext.current=null;clearSearch();clearControlled();clearTaskSession();
    if(isWorkspaceForbidden(e)&&!routeWorkspace){
      accountRefreshBlocked.current=false;setWorkspaceForbidden(false);setError('');
      const generation=accountGeneration.current;accountInFlight.current=generation;
      void load(generation).finally(()=>{if(accountInFlight.current===generation)accountInFlight.current=null});
      return;
    }
-   if(isAuthenticationRejection(e)){clearSession();setAuth('认证失败');accountRefreshBlocked.current=false}
+   if(isAuthenticationFailure(e)){clearSession();setAuth('认证失败');accountRefreshBlocked.current=false}
    else{setWorkspaceForbidden(true);accountRefreshBlocked.current=true;setAuth('工作区访问被拒绝')}
    setError(e instanceof Error?e.message:'当前权限不允许此访问');
- },[clearControlled,clearSearch,routeWorkspace,load]);
+ },[clearControlled,clearSearch,clearTaskSession,routeWorkspace,load]);
  const refreshAccount=useCallback(()=>{
    const generation=++accountGeneration.current;accountInFlight.current=generation;
    void load(generation).finally(()=>{if(accountInFlight.current===generation)accountInFlight.current=null});
@@ -133,15 +149,16 @@ export default function App(){
  },[]);
  const signOut=()=>{
    accountGeneration.current+=1;
-   setWorkspace(null);setAccessResult('');currentContext.current=null;clearSearch();clearControlled();
+   setWorkspace(null);setAccessResult('');currentContext.current=null;clearSearch();clearControlled();clearTaskSession();
    accountRefreshBlocked.current=false;setWorkspaceForbidden(false);
    setAccount(null);setAuth('正在安全退出');setError('');logout();
  };
 
  useLayoutEffect(()=>{
    accountGeneration.current+=1;setAccount(null);setWorkspace(null);setAccessResult('');
-   currentContext.current=null;clearSearch();clearControlled();
- },[routeWorkspace,clearControlled,clearSearch]);
+   currentContext.current=null;clearSearch();clearControlled();clearTaskSession(Boolean(previousRouteWorkspace.current&&previousRouteWorkspace.current!==routeWorkspace));
+   previousRouteWorkspace.current=routeWorkspace;
+ },[routeWorkspace,clearControlled,clearSearch,clearTaskSession]);
 
  useEffect(()=>{
    mounted.current=true;
@@ -154,13 +171,35 @@ export default function App(){
      if(toastTimer.current!==null){clearTimeout(toastTimer.current);toastTimer.current=null}
    };
  },[refreshAccount]);
+ useEffect(()=>()=>{actionAbort.current?.abort()},[]);
+
+ const bellScope=validIdentifiers&&account&&workspace&&account.workspace_id===workspace.workspace_id&&(!routeWorkspace||routeWorkspace===workspace.workspace_id)
+   ?[workspace.actor_id,workspace.workspace_id,...workspace.policy_epoch].join(':'):null;
+ const bellWorkspaceId=bellScope?workspace?.workspace_id:null;
+ const visibleUnread=unreadScope.current===bellScope?hasUnread:null;
+ useEffect(()=>{
+   if(unreadScope.current!==bellScope){unreadScope.current=bellScope;setHasUnread(null)}
+   if(!bellScope||!bellWorkspaceId){setHasUnread(null);return}
+   let active=true;let controller:AbortController|null=null;
+   const scan=async()=>{
+     controller?.abort();const request=new AbortController();controller=request;
+     try{
+       const unread=await getUnreadNotification(bellWorkspaceId,request.signal);
+       if(active&&!request.signal.aborted&&unreadScope.current===bellScope)setHasUnread(unread);
+     }catch(cause){if(active&&!request.signal.aborted&&unreadScope.current===bellScope){setHasUnread(null);if(cause instanceof TaskError&&['authentication','forbidden'].includes(cause.failure))rejectAccess(cause)}}
+   };
+   void scan();const timer=setInterval(()=>void scan(),30000);
+   return()=>{active=false;clearInterval(timer);controller?.abort()};
+ },[bellScope,bellWorkspaceId,notificationRevision,route.pathname,rejectAccess]);
 
  const visibleAccount=!validIdentifiers||(routeWorkspace&&account?.workspace_id!==routeWorkspace)?null:account;
  const initial=visibleAccount?.display_name.slice(0,1)??'访';
  const hasSession=Boolean(token());
  const base=visibleAccount?`/workspaces/${visibleAccount.workspace_id}`:'';
+ const taskScope=workspace?[workspace.actor_id,workspace.workspace_id,...workspace.policy_epoch].join(':'):'';
  const accountPage=route.pathname==='/admin/members'||route.pathname.endsWith('/account')||Boolean(resourceId);
  const currentView=route.pathname.split('/')[3]??'home';
+ const taskPage=currentView==='tasks'||currentView==='notifications';
  const go=(view:string)=>{if(visibleAccount)navigate(`${base}/${view}`)};
  const navAction=(index:number)=>{if(index===0)go('home');else if(index===1)go('documents');else if(index===2)go('references');else showToast(unavailableMessage)};
  const activeNav=currentView==='documents'||currentView==='records'?1:currentView==='references'?2:0;
@@ -173,7 +212,7 @@ export default function App(){
     onCompositionEnd={e=>{searchComposing.current=false;setSearchText(limitSearchText(e.currentTarget.value))}}
     onChange={e=>setSearchText(searchComposing.current?e.target.value:limitSearchText(e.target.value))}
     onKeyDown={e=>{if(e.key==='Enter'&&!searchComposing.current&&!e.nativeEvent.isComposing&&e.nativeEvent.keyCode!==229&&searchText.trim()&&!searchText.includes('\0')){setSearch(old=>({query:searchText.trim(),sequence:old.sequence+1}));go('search')}}}/>
-   <div className="bell" role="button" tabIndex={0} aria-label="通知" onClick={()=>showToast('通知功能尚未开放')} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();showToast('通知功能尚未开放')}}}>♧</div>
+       <div className={`bell${visibleUnread===true?' unread':''}`} role="button" tabIndex={visibleAccount?0:-1} aria-label={visibleUnread===null?'通知，未读状态待确认':'通知'} aria-disabled={!visibleAccount} onClick={()=>go('notifications')} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go('notifications')}}}>♧</div>
    <button className="avatar account-toggle" aria-label="账户与会话" disabled={!visibleAccount} onClick={()=>go('account')}>{initial}</button><div className="uinfo"><b>{visibleAccount?.display_name??'未登录'}</b><small>{visibleAccount?.department??auth}</small></div>
   </header>
   <div className="shell"><aside className="sidebar" id="sidebar" aria-label="项目导航">
@@ -184,7 +223,7 @@ export default function App(){
    <div className="side-bottom"><div id="discovery-storage-slot">{(!visibleAccount||accountPage)&&<div className="storage storage-fallback"><div className="storage-fallback-content"><b>可见记录元数据占用</b><p>尚未统计</p><small>打开记录集合后显示；附件与总体配额未知。</small></div></div>}</div></div>
   </aside><main className="page active"><section className="workspace">
    {!visibleAccount?<><div className="hero"><h2>👋 欢迎进入安全工作区</h2><p>{workspaceForbidden?'当前账户无法进入此工作区。':'登录后才能进入工作区。'}</p></div><div className="notice">{accountState}</div></>:workspace&&workspace.workspace_id===visibleAccount.workspace_id?<>
-    {accountPage?<><header className="page-header"><h1>项目与账户</h1><span className="grow"/><button className="btn" onClick={()=>go('home')}>返回工作台</button></header><div className="notice">{accountState}</div>{accessResult&&<p className="notice" role="status">{accessResult}</p>}<AccessPanel key={`${route.pathname}:${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onSaved={setAccessResult} resourceId={resourceId}/></>:<><DiscoveryPanel key={`${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} search={search} onReject={rejectAccess} onRefresh={refreshAccount}/><details className="workspace-runtime"><summary>账户与运行状态</summary>{accountState}</details></>}
+	    {accountPage?<><header className="page-header"><h1>项目与账户</h1><span className="grow"/><button className="btn" onClick={()=>go('home')}>返回工作台</button></header><div className="notice">{accountState}</div>{accessResult&&<p className="notice" role="status">{accessResult}</p>}<AccessPanel key={`${route.pathname}:${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onSaved={setAccessResult} resourceId={resourceId}/></>:taskPage?<TaskCenter key={taskScope} current={workspace} onReject={rejectAccess} onRefresh={refreshAccount} onNotificationsChanged={()=>setNotificationRevision(value=>value+1)} action={taskAction?.scope===taskScope?taskAction:null} setAction={setTaskAction} actionAbort={actionAbort}/>:<><DiscoveryPanel key={`${workspace.actor_id}:${workspace.workspace_id}:${workspace.policy_epoch.join(':')}`} current={workspace} search={search} onReject={rejectAccess} onRefresh={refreshAccount}/><details className="workspace-runtime"><summary>账户与运行状态</summary>{accountState}</details></>}
    </>:null}
   </section></main></div><div className={`toast${toast.shown?' show':''}`} role="status" aria-live="polite">{toast.message}</div><div className="mobile-note">建议在 1180px 以上桌面浏览器查看此原型。</div>
  </div>

@@ -2,6 +2,43 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eid.local/contracts/task.schema.json",
   "$defs": {
+    "EventPage": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/TaskEventView"
+          },
+          "maxItems": 64,
+          "title": "Data",
+          "type": "array"
+        },
+        "current_seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Current Seq",
+          "type": "integer"
+        },
+        "retention_floor": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Retention Floor",
+          "type": "integer"
+        },
+        "reset_required": {
+          "default": false,
+          "title": "Reset Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data",
+        "current_seq",
+        "retention_floor"
+      ],
+      "title": "EventPage",
+      "type": "object"
+    },
     "InventoryInput": {
       "additionalProperties": false,
       "properties": {
@@ -132,6 +169,135 @@
         "policy_epoch"
       ],
       "title": "InventoryResult",
+      "type": "object"
+    },
+    "NotificationPage": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/NotificationView"
+          },
+          "maxItems": 25,
+          "title": "Data",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "NotificationPage",
+      "type": "object"
+    },
+    "NotificationResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/NotificationView"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "NotificationResponse",
+      "type": "object"
+    },
+    "NotificationUnreadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "has_unread": {
+          "title": "Has Unread",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "has_unread"
+      ],
+      "title": "NotificationUnreadResponse",
+      "type": "object"
+    },
+    "NotificationView": {
+      "additionalProperties": false,
+      "properties": {
+        "notification_id": {
+          "format": "uuid",
+          "title": "Notification Id",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "event_seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "event_type": {
+          "enum": [
+            "task.succeeded",
+            "task.blocked",
+            "task.failed",
+            "task.cancelled",
+            "task.dead_letter"
+          ],
+          "title": "Event Type",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "SUCCEEDED",
+            "BLOCKED",
+            "FAILED",
+            "CANCELLED",
+            "DEAD_LETTER"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "read_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Read At"
+        }
+      },
+      "required": [
+        "notification_id",
+        "task_id",
+        "event_seq",
+        "event_type",
+        "state",
+        "created_at"
+      ],
+      "title": "NotificationView",
       "type": "object"
     },
     "ResultResponse": {
@@ -279,6 +445,96 @@
       "title": "TaskEnvelope",
       "type": "object"
     },
+    "TaskEventView": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "event_type": {
+          "enum": [
+            "task.queued",
+            "task.running",
+            "task.retry_wait",
+            "task.succeeded",
+            "task.blocked",
+            "task.failed",
+            "task.cancelled",
+            "task.dead_letter",
+            "task.cancel_requested"
+          ],
+          "title": "Event Type",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "RETRY_WAIT",
+            "SUCCEEDED",
+            "BLOCKED",
+            "FAILED",
+            "CANCELLED",
+            "DEAD_LETTER"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "seq",
+        "event_type",
+        "state",
+        "occurred_at"
+      ],
+      "title": "TaskEventView",
+      "type": "object"
+    },
+    "TaskPage": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/TaskSnapshot"
+          },
+          "maxItems": 25,
+          "title": "Data",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "TaskPage",
+      "type": "object"
+    },
     "TaskResponse": {
       "additionalProperties": false,
       "properties": {
@@ -318,6 +574,7 @@
           "enum": [
             "waiting",
             "inventory",
+            "working",
             "retry_wait",
             "done",
             "blocked",
@@ -329,14 +586,34 @@
           "type": "string"
         },
         "category": {
-          "const": "integration",
+          "enum": [
+            "generation",
+            "retrieval",
+            "review",
+            "parse_ocr",
+            "render",
+            "integration"
+          ],
           "title": "Category",
           "type": "string"
         },
         "operation": {
-          "const": "inventory",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "title": "Operation",
           "type": "string"
+        },
+        "parent_task_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Task Id"
         },
         "attempt": {
           "maximum": 9007199254740991,
@@ -355,6 +632,13 @@
           "maximum": 9007199254740991,
           "minimum": 1,
           "title": "Current Seq",
+          "type": "integer"
+        },
+        "retention_floor": {
+          "default": 1,
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Retention Floor",
           "type": "integer"
         },
         "progress": {
@@ -459,8 +743,43 @@
           "type": "string"
         },
         "result_url": {
-          "title": "Result Url",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result Url"
+        },
+        "can_cancel": {
+          "default": false,
+          "title": "Can Cancel",
+          "type": "boolean"
+        },
+        "can_retry": {
+          "default": false,
+          "title": "Can Retry",
+          "type": "boolean"
+        },
+        "action_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "OPERATION_UNAVAILABLE",
+                "EXTERNAL_EFFECT_UNKNOWN",
+                "TASK_TERMINAL",
+                "TASK_NOT_TERMINAL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action Reason"
         }
       },
       "required": [
@@ -494,6 +813,21 @@
     },
     {
       "$ref": "#/$defs/ResultResponse"
+    },
+    {
+      "$ref": "#/$defs/TaskPage"
+    },
+    {
+      "$ref": "#/$defs/EventPage"
+    },
+    {
+      "$ref": "#/$defs/NotificationPage"
+    },
+    {
+      "$ref": "#/$defs/NotificationResponse"
+    },
+    {
+      "$ref": "#/$defs/NotificationUnreadResponse"
     }
   ]
 }

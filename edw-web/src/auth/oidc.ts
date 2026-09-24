@@ -12,7 +12,7 @@ let callback: Promise<string> | null = null;
 
 type OidcTransaction={state:string;verifier:string;returnTo:string};
 const uuidPath='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-const workspaceReturnPath=new RegExp(`^/workspaces/${uuidPath}/(?:home|documents|favorites|references|recycle|search|project|projects|account|(?:resources|records)/${uuidPath})$`);
+const workspaceReturnPath=new RegExp(`^/workspaces/${uuidPath}/(?:home|documents|favorites|references|recycle|search|project|projects|account|tasks|notifications|(?:tasks|resources|records)/${uuidPath})$`);
 // Comparing the full match also rejects a final line break accepted by the $ anchor.
 const safeReturnPath=(path:unknown):path is string=>typeof path==='string'&&(path==='/'||path==='/admin/members'||workspaceReturnPath.exec(path)?.[0]===path);
 

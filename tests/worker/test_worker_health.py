@@ -34,7 +34,7 @@ class Connection:
     def __init__(
         self,
         marker: str,
-        revision: str | list[tuple[str]] = "0009_fenced_recovery",
+        revision: str | list[tuple[str]] = "0010_task_observation",
         user: str = "eid_worker",
         database: str = "eid_local_dev",
     ):
@@ -79,7 +79,7 @@ def configure_non_database_dependencies(monkeypatch):
     monkeypatch.setattr(worker_app.boto3, "client", lambda *_args, **_kwargs: S3Client())
     monkeypatch.setenv("EID_DATABASE_URL", "postgresql://worker@postgres/eid_local_dev")
     monkeypatch.setenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    monkeypatch.setenv("EID_REQUIRED_SCHEMA_REVISION", "0009_fenced_recovery")
+    monkeypatch.setenv("EID_REQUIRED_SCHEMA_REVISION", "0010_task_observation")
     monkeypatch.setenv("EID_REDIS_URL", "redis://redis:6379/0")
     monkeypatch.setenv("EID_S3_ENDPOINT_URL", "http://seaweedfs:8333")
     monkeypatch.setenv("EID_S3_ACCESS_KEY", "eid-s3-worker")
@@ -94,7 +94,7 @@ def test_worker_dependency_gate_accepts_exact_marker_and_revision(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0009_fenced_recovery",
+            "0010_task_observation",
         ),
     )
 
@@ -117,6 +117,9 @@ def test_worker_readiness_checks_current_relay_function_signatures(monkeypatch):
     assert "NOT has_table_privilege(current_user,'durable_task','UPDATE')" in privilege_query
     assert "NOT has_table_privilege(current_user,'task_result','INSERT')" in privilege_query
     assert "NOT has_table_privilege(current_user,'discovery_record','SELECT')" in privilege_query
+    assert "NOT has_table_privilege(current_user,'task_notification','SELECT')" in privilege_query
+    assert "'eid_notification_mark_read_v1(uuid,uuid)'" in privilege_query
+    assert "'eid_task_cancel_observed_v1(uuid,uuid,text)'" in privilege_query
 
 
 def test_worker_readiness_rejects_missing_authorization_execute(monkeypatch):
@@ -181,7 +184,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     monkeypatch.setattr(worker_app, "_RELAY_READY", relay_ready)
     database = {
         "marker": "eid-local-dev-v1",
-        "revision": "0009_fenced_recovery",
+        "revision": "0010_task_observation",
     }
     monkeypatch.setattr(
         worker_app.psycopg,
@@ -192,7 +195,7 @@ def test_control_readiness_rechecks_dependencies_after_startup_failure_and_recov
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
     database["revision"] = "0000_stale"
     assert worker_app.dependency_readiness(None) == {"status": "unavailable"}
-    database["revision"] = "0009_fenced_recovery"
+    database["revision"] = "0010_task_observation"
     assert worker_app.dependency_readiness(None) == {"status": "ready"}
 
 
@@ -215,7 +218,7 @@ def test_control_readiness_returns_only_sanitized_failure(monkeypatch):
 @pytest.mark.parametrize(
     ("marker", "revision", "message"),
     [
-        ("foreign-environment", "0009_fenced_recovery", "environment marker"),
+        ("foreign-environment", "0010_task_observation", "environment marker"),
         ("eid-local-dev-v1", "0000_stale", "schema revision"),
     ],
 )
@@ -251,7 +254,7 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
     configure_non_database_dependencies(monkeypatch)
     connection = Connection(
         "eid-local-dev-v1",
-        "0009_fenced_recovery",
+        "0010_task_observation",
         user=user,
         database=database,
     )
@@ -274,7 +277,8 @@ def test_worker_dependency_gate_rejects_wrong_connection_identity_before_schema_
         [("0000_stale",)],
         [("0007_workspace_discovery",)],
         [("0008_durable_submission",)],
-        [("0009_fenced_recovery",), ("0002_divergent",)],
+        [("0009_fenced_recovery",)],
+        [("0010_task_observation",), ("0002_divergent",)],
     ],
 )
 def test_worker_dependency_gate_requires_exactly_one_expected_revision(
@@ -299,7 +303,7 @@ def test_worker_dependency_gate_rejects_redis_failure(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0009_fenced_recovery",
+            "0010_task_observation",
         ),
     )
     monkeypatch.setattr(
@@ -319,7 +323,7 @@ def test_worker_dependency_gate_rejects_s3_client_error(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0009_fenced_recovery",
+            "0010_task_observation",
         ),
     )
 
@@ -345,7 +349,7 @@ def test_worker_dependency_clients_close_after_success(monkeypatch):
         "connect",
         lambda *_args, **_kwargs: Connection(
             "eid-local-dev-v1",
-            "0009_fenced_recovery",
+            "0010_task_observation",
         ),
     )
 

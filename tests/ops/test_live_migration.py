@@ -34,7 +34,8 @@ REQUIRED_0008_TABLES = {
     "task_attempt", "task_result", "task_receipt", "task_quarantine",
 }
 NEW_0009_TABLES = {"task_attempt_stage", "task_effect_intent", "task_scheduler_lease"}
-REQUIRED_TABLES = REQUIRED_0008_TABLES | NEW_0009_TABLES
+NEW_0010_TABLES = {"task_notification", "task_observation_binding"}
+REQUIRED_TABLES = REQUIRED_0008_TABLES | NEW_0009_TABLES | NEW_0010_TABLES
 
 
 def _public_state(connection):
@@ -124,7 +125,7 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0009_fenced_recovery"
+            ).scalar_one() == "0010_task_observation"
             assert set(
                 connection.execute(
                     sa.text(
@@ -174,11 +175,11 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                     ).scalar_one()
                     expected = table == "alembic_version" or (role == "eid_api" and table not in {
                         "access_audit", "access_invalidation", "access_delegation",
-                        "task_event", "task_outbox", "task_inbox", "task_attempt", "task_quarantine",
+                        "task_outbox", "task_inbox", "task_attempt", "task_quarantine",
                         "task_scheduler_lease"})
                     assert allowed is expected
 
-            for table in NEW_0009_TABLES:
+            for table in NEW_0009_TABLES | NEW_0010_TABLES:
                 qualified_table = f'"{schema}"."{table}"'
                 for role in ("eid_api", "eid_worker"):
                     for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
@@ -198,17 +199,20 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                 "eid_task_schedule_v2(uuid,bigint)",
             )
             api_only = (
-                "eid_task_cancel_v2(uuid,uuid,text)",
+                "eid_task_cancel_observed_v1(uuid,uuid,text)",
+                "eid_notification_mark_read_v1(uuid,uuid)",
                 "eid_task_scheduler_ready_v2()",
             )
             revoked = (
                 "eid_task_claim(uuid,jsonb,text,uuid)",
                 "eid_task_finish_inventory(uuid,uuid)",
+                "eid_task_cancel_v2(uuid,uuid,text)",
             )
             internal = (
                 "eid_task_bind_initial_event()",
                 "eid_task_envelope_hash(jsonb)",
                 "eid_task_isolate_poison_v2(uuid,jsonb,text,text,uuid)",
+                "eid_task_notification_v1()",
             )
             for function in worker_only + api_only + revoked + internal:
                 qualified_function = f'"{schema}".{function}'

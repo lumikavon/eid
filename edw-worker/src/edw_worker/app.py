@@ -88,12 +88,22 @@ def _database_probe(operation_timeout: float) -> None:
              AND NOT has_table_privilege(current_user,'task_scheduler_lease','UPDATE')
              AND NOT has_table_privilege(current_user,'task_effect_intent','INSERT')
              AND NOT has_table_privilege(current_user,'discovery_record','SELECT')
+             AND NOT has_table_privilege(current_user,'task_notification','SELECT')
+             AND NOT has_table_privilege(current_user,'task_notification','UPDATE')
+             AND NOT has_table_privilege(current_user,'task_observation_binding','SELECT')
+             AND NOT has_table_privilege(current_user,'task_event','SELECT')
+             AND NOT has_function_privilege(current_user,
+                 'eid_notification_mark_read_v1(uuid,uuid)','EXECUTE')
+             AND NOT has_function_privilege(current_user,
+                 'eid_task_cancel_observed_v1(uuid,uuid,text)','EXECUTE')
+             AND NOT has_function_privilege(current_user,
+                 'eid_task_bind_observation_v1(uuid,uuid,uuid[])','EXECUTE')
             """).fetchone()
         if task_grants != (True,):
             raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0009_fenced_recovery")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0010_task_observation")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:
