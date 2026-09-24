@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-09-24'
 status: 'done'
 route: 'dispatch'
-review_loop_iteration: 5
+review_loop_iteration: 6
 story_key: '1-6-task-observation'
 epic_id: 'epic-1'
 baseline_commit: 'cacd87eb7ff17922c649254e11ecd0e133c3ced3'
@@ -65,6 +65,7 @@ context:
 - REST 提供受权任务/通知分页、事件页与未读存在性查询；SSE 使用 Bearer 请求头、有限流时长及每轮重新鉴权。Web 恢复最新保留事件、显示历史裁剪、重连去重、撤权清理，并在结果未知时保持 `null`。未读查询最多核对 512 条不可见候选，超限返回 503 而不误报无未读；0010 的部分索引覆盖未读筛选。
 - 测试源码覆盖契约、授权、cursor、撤权、通知独立性及 Web wire 边界；按当前政策只编译和审查，未执行测试套件、迁移或实际运行。三项 AC 的运行主验证均保持 `not-run`，此处 `done` 仅表示软件实现及静态门禁关闭。
 - SSE 每个轮询使用独立的已授权事务；事务结束到实际发送之间存在极短竞态窗口，独立后端审查将其列为未证实的时序风险。真实撤权时序尚未运行验证。
+- Epic 1 静态集成复盘发现任务观察使用 API 主机时间、结果来源复核沿用请求开始时的数据库时间；已统一由当前数据库 `clock_timestamp()` 判定，并在有界结果来源均加共享锁后做最终授权与身份复核。新增确定性时间边界和旧终态通知回填的测试源码，均未执行。
 
 **本 Story 文件清单：** `contracts/task.schema.json`、`deployment/compose.yaml`、`deployment/nginx/default.conf`、`edw-api/src/edw_api/{config.py,main.py,task_contract.py,tasks/repository.py,tasks/routes.py}`、`edw-web/src/app/{App.tsx,prototype.css,task-api.ts,task-api.test.ts}`、`edw-web/src/auth/oidc.ts`、`edw-web/src/features/tasks/{TaskCenter.tsx,TaskCenter.action.test.ts,task-action.ts,tasks.css}`、`edw-worker/src/edw_worker/app.py`、`migrations/versions/0010_task_observation.py`、`scripts/seed_access_fixtures.py`、`tests/{contract/test_task_observation.py,security/test_task_observation.py,ops/test_live_dependencies.py,ops/test_live_migration.py,worker/test_worker_health.py}`、本记录与 `sprint-status.yaml` 的 Epic 1/Story 1.6 状态块。
 
@@ -81,6 +82,7 @@ context:
 - 第三轮：medium，未读查询缺匹配索引；0010 加部分索引。medium，历史从保留起点最多取 256 条且初始 reset 不重建；改从最新 64 条恢复并重试变化的窗口。low，轮询时红点短暂消失；同授权范围内保留已确认状态。
 - 第四轮：medium，实时第 65 条事件裁剪历史却未提示；增加 `eventCount` 与同步的历史不完整提示。
 - 第五轮：独立 `eid_reviewer` 对最终事件计数修复给出限定范围 `approved`；后端部分索引复审 `approved`。指定 Muse Spark 1.3 Contributor 的辅助静态审查已实际调用，未发现该最终切片的阻断问题；其意见不替代独立审查或运行证明。
+- 第六轮（Epic 1 集成复盘返修）：medium，任务可见性使用 API 主机时间，保留结果可沿用请求开始的授权时间；改为数据库时间并在返回前复核。审查指出缺确定性到期及成功结果路径测试，已补测试源码；独立复审对最终源码给出 `approved`。运行验证继续 `not-run`。
 
 ## Verification
 

@@ -121,7 +121,78 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
                     {"schema": schema},
                 ).scalars()
             ) == REQUIRED_0008_TABLES
+            upgrade("0009_fenced_recovery")
+            actor_id, workspace_id = connection.exec_driver_sql(
+                "SELECT i.id,w.id FROM identity_account i "
+                "JOIN workspace_membership m ON m.identity_id=i.id "
+                "JOIN workspace w ON w.id=m.workspace_id "
+                "WHERE i.subject='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' "
+                "AND w.slug='eid-local'"
+            ).one()
+
+            def insert_blocked_task(task_id):
+                delegation_id = uuid.uuid4()
+                connection.execute(sa.text(
+                    "INSERT INTO access_delegation(id,actor_id,workspace_id,operation,purpose,"
+                    "service_id,expires_at,issued_epoch) "
+                    "VALUES (:delegation,:actor,:workspace,'inventory','migration-test',"
+                    "'eid-worker',CURRENT_TIMESTAMP + interval '1 hour',1)"
+                ), {"delegation": delegation_id, "actor": actor_id, "workspace": workspace_id})
+                connection.execute(sa.text(
+                    "INSERT INTO durable_task(id,workspace_id,actor_id,delegation_id,input,"
+                    "input_hash,state,stage,current_seq,error_code,request_id,trace_id,"
+                    "created_at,updated_at) VALUES "
+                    "(:task,:workspace,:actor,:delegation,'{}'::jsonb,:hash,'BLOCKED',"
+                    "'blocked',2,'DEPENDENCY_BLOCKED','migration-test',:trace,"
+                    "CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
+                ), {"task": task_id, "workspace": workspace_id, "actor": actor_id,
+                    "delegation": delegation_id, "hash": "a" * 64, "trace": "b" * 32})
+                connection.execute(sa.text(
+                    "INSERT INTO task_event(event_id,task_id,seq,event_type,state) VALUES "
+                    "(:event,:task,1,'task.queued','QUEUED')"
+                ), {"event": uuid.uuid4(), "task": task_id})
+
+            historical_task, new_task = uuid.uuid4(), uuid.uuid4()
+            insert_blocked_task(historical_task)
+            connection.execute(sa.text(
+                "INSERT INTO task_event(event_id,task_id,seq,event_type,state) VALUES "
+                "(:event,:task,2,'task.blocked','BLOCKED')"
+            ), {"event": uuid.uuid4(), "task": historical_task})
             upgrade("head")
+
+            historic_event = connection.execute(sa.text(
+                "SELECT e.event_type,e.state,e.occurred_at,n.event_type,n.state,n.created_at "
+                "FROM task_event e JOIN task_notification n "
+                "ON n.task_id=e.task_id AND n.event_seq=e.seq "
+                "WHERE e.task_id=:task AND e.seq=2"
+            ), {"task": historical_task}).one()
+            assert historic_event[:2] == historic_event[3:5] == ("task.blocked", "BLOCKED")
+            assert historic_event[2] == historic_event[5]
+            assert connection.execute(sa.text(
+                "SELECT count(*) FROM task_notification WHERE task_id=:task AND event_seq=2"
+            ), {"task": historical_task}).scalar_one() == 1
+
+            insert_blocked_task(new_task)
+            connection.execute(sa.text(
+                "INSERT INTO task_event(event_id,task_id,seq,event_type,state) VALUES "
+                "(:event,:task,2,'task.blocked','BLOCKED')"
+            ), {"event": uuid.uuid4(), "task": new_task})
+            assert connection.execute(sa.text(
+                "SELECT count(*) FROM task_notification WHERE task_id=:task AND event_seq=2 "
+                "AND workspace_id=:workspace AND actor_id=:actor "
+                "AND event_type='task.blocked' AND state='BLOCKED'"
+            ), {"task": new_task, "workspace": workspace_id, "actor": actor_id}).scalar_one() == 1
+            replay = connection.execute(sa.text(
+                "INSERT INTO task_notification(workspace_id,actor_id,task_id,event_seq,"
+                "event_type,state,created_at) "
+                "SELECT workspace_id,actor_id,task_id,event_seq,event_type,state,created_at "
+                "FROM task_notification WHERE task_id=:task AND event_seq=2 "
+                "ON CONFLICT(task_id,event_seq) DO NOTHING"
+            ), {"task": new_task})
+            assert replay.rowcount == 0
+            assert connection.execute(sa.text(
+                "SELECT count(*) FROM task_notification WHERE task_id IN (:old,:new)"
+            ), {"old": historical_task, "new": new_task}).scalar_one() == 2
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"

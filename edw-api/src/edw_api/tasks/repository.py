@@ -1,7 +1,6 @@
 """Task commands own a single short caller transaction; never contact the Broker."""
 import hashlib
 import re
-from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
@@ -14,6 +13,11 @@ from ..task_contract import (InventoryResult, SubmitTask, TaskEnvelope, TaskSnap
 
 TERMINAL = frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "CANCELLED", "DEAD_LETTER"})
 MAX_PAGE_SCAN_ROWS = 512
+
+
+def _database_now(conn):
+    # clock_timestamp advances within a transaction, unlike transaction/statement time.
+    return conn.execute("SELECT clock_timestamp() AS evaluated_at").fetchone()["evaluated_at"]
 
 
 def _capabilities(row):
@@ -122,13 +126,14 @@ def _visible_task(conn, facts, context, row):
             or str(row["actor_id"]) != context.actor_id):
         return False
     if row["operation"] == "inventory" and row["category"] == "integration":
-        authorize(facts, "inventory:read", now=datetime.now(timezone.utc))
+        authorize(facts, "inventory:read", now=_database_now(conn))
         return True
     bindings = conn.execute("""SELECT * FROM task_observation_binding
         WHERE task_id=%s ORDER BY resource_id""",
         (row["id"],)).fetchall()
     if not bindings:
         return False
+    resources = []
     for binding in bindings:
         resource = conn.execute("""SELECT r.*,d.kind AS discovery_kind,
             d.visibility AS discovery_visibility FROM access_resource r
@@ -144,8 +149,13 @@ def _visible_task(conn, facts, context, row):
                 or resource["discovery_kind"] != resource["kind"]
                 or resource["discovery_visibility"] != "visible"):
             return False
+        resources.append(resource)
+    # The resource/discovery rows remain share-locked. Recheck every validity
+    # window against one fresh database time after the last row was fetched.
+    now = _database_now(conn)
+    for resource in resources:
         try:
-            authorize(facts, "resource:read", resource, now=datetime.now(timezone.utc))
+            authorize(facts, "resource:read", resource, now=now)
         except AccessDenied:
             return False
     return True
@@ -320,20 +330,31 @@ def result(conn, subject, workspace_id, task_id):
     if (value.task_id != task["id"] or value.workspace_id != task["workspace_id"]
             or value.policy_epoch != context.policy_epoch):
         raise AccessDenied()
-    # Every retained identifier is rechecked. A changed/recycled/expired source
-    # makes the old summary unavailable instead of disclosing stale membership.
+    # The result is capped at 50 items. Lock both source rows so identity and
+    # visibility cannot change before the final authorization decision.
+    resources = []
     for item in value.items:
-        resource = conn.execute("SELECT * FROM access_resource WHERE id=%s AND workspace_id=%s",
-                                (item.resource_id, workspace_id)).fetchone()
+        resource = conn.execute("""SELECT r.*,d.kind AS discovery_kind,
+            d.revision AS discovery_revision,d.visibility AS discovery_visibility
+            FROM access_resource r JOIN discovery_record d ON d.resource_id=r.id
+            WHERE r.id=%s AND r.workspace_id=%s FOR SHARE OF r,d""",
+            (item.resource_id, workspace_id)).fetchone()
         if not resource:
             raise AccessDenied()
-        authorize(facts, "resource:read", resource)
-        current = conn.execute("SELECT kind,revision,visibility FROM discovery_record "
-                               "WHERE resource_id=%s FOR SHARE", (item.resource_id,)).fetchone()
-        if (not current or current["visibility"] != "visible" or current["kind"] != item.kind
-                or resource["kind"] != item.kind or current["revision"] != item.revision
+        resources.append((item, resource))
+    # checked() and _owned() ran earlier in this transaction. Their sampled time
+    # must not authorize a source or membership that expires while this result
+    # is assembled; the workspace policy and source rows stay share-locked.
+    now = _database_now(conn)
+    authorize(facts, "inventory:read", now=now)
+    for item, resource in resources:
+        if (resource["discovery_visibility"] != "visible"
+                or resource["discovery_kind"] != item.kind
+                or resource["kind"] != item.kind
+                or resource["discovery_revision"] != item.revision
                 or resource["policy_epoch"] != item.resource_epoch):
             raise AccessDenied()
+        authorize(facts, "resource:read", resource, now=now)
     return value
 
 

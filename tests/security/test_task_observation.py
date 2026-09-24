@@ -1,5 +1,5 @@
 """Story 1.6 action and notification security test source; execution is deferred."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -14,6 +14,7 @@ from edw_api.tasks import repository
 WORKSPACE = UUID("22222222-2222-4222-8222-222222222222")
 ACTOR = UUID("33333333-3333-4333-8333-333333333333")
 TASK = UUID("44444444-4444-4444-8444-444444444444")
+FACTS_TIME = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
 
 
 def parent(**changes):
@@ -106,7 +107,6 @@ def test_cancel_rejects_effect_change_after_initial_read(monkeypatch):
 
 
 def observation_facts():
-    now = datetime.now(timezone.utc)
     return {"actor_id": ACTOR, "workspace_id": WORKSPACE, "tenant_id": uuid4(),
             "identity_active": True, "membership_active": True, "roles": ["author"],
             "approval_states": ["draft"], "owner_scope": "any", "clearance": 2,
@@ -114,18 +114,17 @@ def observation_facts():
             "project_id": "project", "customer_id": "customer", "product_id": "product",
             "department": "department", "project_scope": ["project"],
             "customer_scope": ["customer"], "product_scope": ["product"],
-            "department_scope": ["department"], "valid_from": now,
-            "valid_until": None, "evaluated_at": now}
+            "department_scope": ["department"], "valid_from": FACTS_TIME,
+            "valid_until": None, "evaluated_at": FACTS_TIME}
 
 
 def bound_resource(resource_id, **changes):
-    now = datetime.now(timezone.utc)
     return {"id": resource_id, "workspace_id": WORKSPACE, "kind": "document",
             "discovery_kind": "document", "discovery_visibility": "visible",
             "owner_id": ACTOR, "project_id": "project", "customer_id": "customer",
             "product_id": "product", "department": "department",
             "classification": 1, "approval_state": "draft", "policy_epoch": 7,
-            "valid_from": now, "valid_until": None} | changes
+            "valid_from": FACTS_TIME, "valid_until": None} | changes
 
 
 def binding(resource_id, **changes):
@@ -135,15 +134,54 @@ def binding(resource_id, **changes):
 
 
 class BindingConnection:
-    def __init__(self, bindings, resources):
+    def __init__(self, bindings, resources, db_now=None):
         self.bindings = bindings
         self.resources = resources
+        self.db_now = db_now if db_now is not None else datetime.now(timezone.utc)
+        self.clock_reads = 0
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
+        if sql == "SELECT clock_timestamp() AS evaluated_at":
+            self.clock_reads += 1
+            return SimpleNamespace(fetchone=lambda: {"evaluated_at": self.db_now})
         if "FROM task_observation_binding" in sql:
             return SimpleNamespace(fetchall=lambda: self.bindings)
         assert "FOR SHARE OF r,d" in sql
         return SimpleNamespace(fetchone=lambda: self.resources.get(params[0]))
+
+
+@pytest.mark.parametrize("entry", ["detail", "events", "notification"])
+def test_revoked_non_inventory_binding_denies_owned_entry_points(monkeypatch, entry):
+    resource_id, notification_id = uuid4(), uuid4()
+    task = parent(operation="draft", category="generation", workspace_id=WORKSPACE)
+    facts = observation_facts()
+    context = authorize(facts, "workspace:read")
+    monkeypatch.setattr(repository, "checked", lambda _conn, subject, workspace, permission:
+                        (facts, None, context) if (subject, workspace, permission) ==
+                        ("verified", WORKSPACE, "workspace:read") else pytest.fail("Wrong scope"))
+
+    class OwnedConnection(BindingConnection):
+        def execute(self, sql, params=None):
+            if sql.startswith("SELECT * FROM durable_task WHERE id=%s AND workspace_id=%s"):
+                assert params == (TASK, WORKSPACE, context.actor_id)
+                return SimpleNamespace(fetchone=lambda: task)
+            if "FROM task_notification n" in sql:
+                assert params == (notification_id, WORKSPACE, context.actor_id)
+                return SimpleNamespace(fetchone=lambda: {"task_id": TASK})
+            return super().execute(sql, params)
+
+    conn = OwnedConnection([binding(resource_id)], {resource_id: bound_resource(resource_id)})
+    assert repository._owned(conn, "verified", WORKSPACE, TASK)[2] is task
+    conn.resources[resource_id] = bound_resource(resource_id, project_id="revoked-project")
+    with pytest.raises(ApiError) as error:
+        if entry == "detail":
+            repository.read(conn, "verified", WORKSPACE, TASK)
+        elif entry == "events":
+            repository.event_page(conn, "verified", WORKSPACE, TASK, cursor=0)
+        else:
+            repository.notification(conn, "verified", WORKSPACE, notification_id)
+    assert error.value.status_code == 404
+    assert error.value.code == "TASK_NOT_FOUND"
 
 
 def test_bound_non_inventory_task_checks_every_current_resource():
@@ -156,6 +194,29 @@ def test_bound_non_inventory_task_checks_every_current_resource():
     assert repository._visible_task(conn, facts, context, task) is True
     conn.resources[second] = bound_resource(second, project_id="revoked-project")
     assert repository._visible_task(conn, facts, context, task) is False
+
+
+@pytest.mark.parametrize("expiring", ["membership", "resource"])
+def test_bound_task_uses_database_time_for_expiring_authority(expiring):
+    resource_id = uuid4()
+    expiry = FACTS_TIME + timedelta(minutes=1)
+    facts = observation_facts()
+    resource = bound_resource(resource_id)
+    facts.update(valid_from=FACTS_TIME, evaluated_at=FACTS_TIME)
+    resource["valid_from"] = FACTS_TIME
+    if expiring == "membership":
+        facts["valid_until"] = expiry
+    else:
+        resource["valid_until"] = expiry
+    context = authorize(facts, "workspace:read")
+    task = parent(operation="draft", category="generation", workspace_id=WORKSPACE)
+    conn = BindingConnection([binding(resource_id)], {resource_id: resource},
+                             db_now=expiry - timedelta(seconds=1))
+
+    assert repository._visible_task(conn, facts, context, task) is True
+    conn.db_now = expiry
+    assert repository._visible_task(conn, facts, context, task) is False
+    assert conn.clock_reads == 2
 
 
 @pytest.mark.parametrize("bindings,resource_change", [
@@ -194,6 +255,65 @@ def test_non_inventory_result_and_actions_do_not_enter_inventory_handler(monkeyp
         repository.retry(NoInventorySql(), "verified", WORKSPACE, TASK,
                          "retry-key", "request-1", "1" * 32)
     assert retry_error.value.details == {"reason": "OPERATION_UNAVAILABLE"}
+
+
+@pytest.mark.parametrize("expiring,final_offset,allowed", [
+    ("resource", -1, True),
+    ("resource", 0, False),
+    ("membership", -1, True),
+    ("membership", 0, False),
+])
+def test_inventory_result_rechecks_source_and_membership_at_final_database_time(
+        monkeypatch, expiring, final_offset, allowed):
+    resource_id, result_id = uuid4(), uuid4()
+    expiry = FACTS_TIME + timedelta(minutes=1)
+    facts = observation_facts()
+    source = bound_resource(resource_id, discovery_revision=4)
+    facts.update(valid_from=FACTS_TIME, evaluated_at=FACTS_TIME)
+    source["valid_from"] = FACTS_TIME
+    if expiring == "membership":
+        facts["valid_until"] = expiry
+    else:
+        source["valid_until"] = expiry
+    context = authorize(facts, "workspace:read")
+    task = parent(workspace_id=WORKSPACE, state="SUCCEEDED", result_id=result_id)
+    payload = {"result_id": result_id, "task_id": TASK, "workspace_id": WORKSPACE,
+               "measured_at": FACTS_TIME, "scope": "first_authorized_visible_records",
+               "limit": 2, "items": [{"resource_id": resource_id, "kind": "document",
+                                     "revision": 4, "resource_epoch": 7}],
+               "policy_epoch": context.policy_epoch}
+    monkeypatch.setattr(repository, "checked", lambda _conn, subject, workspace, permission:
+                        (facts, None, context) if (subject, workspace, permission) ==
+                        ("verified", WORKSPACE, "workspace:read") else pytest.fail("Wrong scope"))
+
+    class ResultConnection:
+        def __init__(self):
+            self.clock_reads = 0
+
+        def execute(self, sql, params=None):
+            if sql == "SELECT clock_timestamp() AS evaluated_at":
+                self.clock_reads += 1
+                assert self.clock_reads <= 2
+                now = FACTS_TIME if self.clock_reads == 1 else expiry + timedelta(
+                    seconds=final_offset)
+                return SimpleNamespace(fetchone=lambda: {"evaluated_at": now})
+            if sql.startswith("SELECT * FROM durable_task WHERE id=%s AND workspace_id=%s"):
+                assert params == (TASK, WORKSPACE, context.actor_id)
+                return SimpleNamespace(fetchone=lambda: task)
+            if sql == "SELECT payload FROM task_result WHERE id=%s AND task_id=%s":
+                assert params == (result_id, TASK)
+                return SimpleNamespace(fetchone=lambda: {"payload": payload})
+            assert "FOR SHARE OF r,d" in sql
+            assert params == (resource_id, WORKSPACE)
+            return SimpleNamespace(fetchone=lambda: source)
+
+    conn = ResultConnection()
+    if allowed:
+        assert repository.result(conn, "verified", WORKSPACE, TASK).result_id == result_id
+    else:
+        with pytest.raises(AccessDenied):
+            repository.result(conn, "verified", WORKSPACE, TASK)
+    assert conn.clock_reads == 2
 
 
 def test_notification_mark_read_has_independent_resource_authorization():
