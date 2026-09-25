@@ -1,13 +1,14 @@
 """Current-permission editor, immutable version and private image HTTP boundary."""
 
 import json
+from time import perf_counter
 from contextlib import contextmanager
 from hashlib import sha256
 from uuid import UUID, uuid4
 
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..access.policy import AccessDenied
@@ -15,10 +16,10 @@ from ..access.repository import checked
 from ..auth import bearer_token
 from ..db import connection
 from ..errors import ApiError
-from .editor_repository import editable_document, save_document
+from .editor_repository import editable_document, list_versions, read_version, save_document
 from .media import object_client, prepare_image
 from .repository import _local_write_target
-from .schemas import DocumentResponse, DomainAst
+from .schemas import DocumentResponse, DocumentVersionListResponse, DomainAst
 
 
 class SaveDocument(BaseModel):
@@ -61,11 +62,32 @@ def create_router(settings, verify):
 
     @router.put("/documents/{document_id}", response_model=DocumentResponse)
     def save(workspace_id: UUID, document_id: UUID, command: SaveDocument,
-             request: Request, current=Depends(actor)):
+             request: Request, response: Response, current=Depends(actor)):
+        started = perf_counter()
         with database() as conn:
-            return DocumentResponse(data=save_document(
-                conn, current.subject, workspace_id, document_id, command,
-                request.state.request_id, request.state.trace_id))
+            saved = save_document(conn, current.subject, workspace_id, document_id, command,
+                                  request.state.request_id, request.state.trace_id)
+        response.headers["Server-Timing"] = f"save;dur={(perf_counter() - started) * 1000:.2f}"
+        response.headers["Cache-Control"] = "no-store"
+        return DocumentResponse(data=saved)
+
+    @router.get("/documents/{document_id}/versions", response_model=DocumentVersionListResponse)
+    def versions(workspace_id: UUID, document_id: UUID, response: Response,
+                 before_revision: int | None = Query(default=None, ge=1, le=9007199254740991),
+                 current=Depends(actor)):
+        with database() as conn:
+            result = list_versions(conn, current.subject, workspace_id, document_id,
+                                   before_revision=before_revision)
+        response.headers["Cache-Control"] = "no-store"
+        return DocumentVersionListResponse(data=result)
+
+    @router.get("/documents/{document_id}/versions/{version_id}", response_model=DocumentResponse)
+    def version(workspace_id: UUID, document_id: UUID, version_id: UUID, response: Response,
+                current=Depends(actor)):
+        with database() as conn:
+            result = read_version(conn, current.subject, workspace_id, document_id, version_id)
+        response.headers["Cache-Control"] = "no-store"
+        return DocumentResponse(data=result)
 
     @router.post("/documents/{document_id}/images", status_code=201)
     async def upload(workspace_id: UUID, document_id: UUID, request: Request,

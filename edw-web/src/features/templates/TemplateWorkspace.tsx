@@ -6,7 +6,7 @@ import {createDocument,getDocument,getTemplateDetail,getTemplates,getTypeCatalog
 import DomainEditor from './DomainEditor';
 import './templates.css';
 
-type Props={current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void};
+type Props={current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void;onRegisterNavigationGuard?:(handler:((destination:string)=>void)|null)=>void;onNavigateTo?:(destination:string)=>void};
 const scopeLabels:Record<TemplateScope,string>={enterprise:'企业',department:'部门',product_line:'产品线',project:'项目',personal:'个人草稿'};
 const fallbackTypes:Record<DocumentType,string>={technical_solution:'技术方案',bid:'标书',prd:'PRD',test_plan:'测试方案',project_summary:'项目总结',technical_requirements:'技术要求',quality_outline:'质量大纲',project_plan:'项目计划',functional_test_outline:'功能测试大纲',performance_test_outline:'性能测试大纲',production_form:'生产过程记录表单'};
 const errorText=(error:unknown)=>error instanceof Error?error.message:'读取失败，请重试';
@@ -16,17 +16,18 @@ const contextFailure=(error:TemplateError)=>error.failure==='authentication'||er
 const clearTemplateQueries=(cache:ReturnType<typeof useQueryClient>)=>{
  for(const queryKey of [['template-catalog'],['template-list'],['template-detail'],['template-document']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}
 };
-function DocumentView({current,documentId,onReject,onRefresh}:Props&{documentId:string}){
+function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigationGuard,onNavigateTo}:Props&{documentId:string}){
  const navigate=useNavigate();const cache=useQueryClient();const base=`/workspaces/${current.workspace_id}`;const scope=contextKey(current);
  const [blocked,setBlocked]=useState(false);const handled=useRef<unknown>(null);
+ const backRef=useRef<()=>void>(()=>navigate(`${base}/documents`));
  const document=useQuery({queryKey:['template-document',scope,documentId],queryFn:({signal})=>getDocument(current,documentId,signal),retry:false,gcTime:0,enabled:!blocked});
  const fatal=document.error instanceof TemplateError&&protectedFailure(document.error)?document.error:null;
  useLayoutEffect(()=>{if(!fatal||handled.current===fatal)return;handled.current=fatal;setBlocked(true);if(fatal.failure==='authentication')onReject(fatal);else onRefresh()},[fatal,onReject,onRefresh]);
  useEffect(()=>{if(blocked)clearTemplateQueries(cache)},[blocked,cache]);
  const value=!blocked&&!fatal?document.data:undefined;
- return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>navigate(`${base}/documents`)}>返回项目文档</button></header>
+ return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>backRef.current()}>返回项目文档</button></header>
   {blocked||fatal?<div className="template-state" role="alert"><p>{errorText(fatal??document.error??new Error('当前权限已变化，请重新读取'))}</p><button className="btn" onClick={()=>{setBlocked(false);void document.refetch()}}>重新读取</button></div>:document.isFetching||document.isPending?<p className="template-state" role="status">正在读取当前授权文档…</p>:document.error?<div className="template-state" role="alert"><p>{errorText(document.error)}</p><button className="btn" onClick={()=>void document.refetch()}>重新读取</button></div>:null}
-  {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh}/>}
+  {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
  </div>;
 }
 function CatalogView({current,onReject,onRefresh}:Props){

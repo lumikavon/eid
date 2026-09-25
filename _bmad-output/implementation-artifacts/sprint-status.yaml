@@ -92,7 +92,7 @@ development_status:
   epic-2: in-progress
   2-1-template-creation: done # 软件门禁/独立源码审查完成；测试、数据库与真实运行验收 not-run
   2-2-domain-editor: done # 软件实现/静态编译/独立源码审查完成；测试、迁移、DB/S3/服务/浏览器及现场验收 not-run
-  2-3-version-conflicts: backlog
+  2-3-version-conflicts: done # 软件实现/静态编译/独立源码审查完成；测试、DB/服务/浏览器及真实运行验收 not-run
   2-4-template-governance: backlog
   2-5-project-context: backlog
   2-6-outline-confirmation: backlog

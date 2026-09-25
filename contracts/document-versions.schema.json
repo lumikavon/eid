@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/document-versions.schema.json",
+  "title": "EID authorized document version history",
+  "description": "GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/versions; historic detail uses DocumentResponse from template-creation.schema.json. Both reads require current resource:read and integrity checks. before_revision is an exclusive descending cursor.",
+  "type": "object",
+  "required": ["data"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["items", "next_revision"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/version"}},
+        "next_revision": {"oneOf": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}, {"type": "null"}]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "version": {
+      "type": "object",
+      "required": ["id", "revision", "base_version_id", "content_hash", "created_by", "created_at", "source"],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "base_version_id": {"oneOf": [{"type": "string", "format": "uuid"}, {"type": "null"}]},
+        "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "created_by": {"type": "string", "format": "uuid"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "source": {"enum": ["template_create", "manual_edit"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

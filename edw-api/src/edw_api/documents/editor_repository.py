@@ -25,6 +25,57 @@ def editable_document(conn, subject, workspace_id, document_id, *, exclusive=Fal
     return facts, resource
 
 
+def _read_history_target(conn, subject, workspace_id, document_id):
+    try:
+        facts, resource, _ = checked(conn, subject, workspace_id, "resource:read", document_id)
+    except AccessDenied as exc:
+        raise ApiError(404, "DOCUMENT_NOT_FOUND", "文档不存在或当前不可见") from exc
+    if resource["kind"] != "document":
+        raise ApiError(404, "DOCUMENT_NOT_FOUND", "文档不存在或当前不可见")
+    # The head and resource must agree before any historic version is disclosed.
+    _document_row(conn, facts, workspace_id, document_id)
+    return resource
+
+
+def list_versions(conn, subject, workspace_id, document_id, before_revision=None):
+    resource = _read_history_target(conn, subject, workspace_id, document_id)
+    rows = conn.execute(
+        "SELECT v.id,v.revision,v.base_version_id,v.content_hash,v.created_by,v.created_at,v.ast "
+        "FROM document_version v JOIN document d ON d.id=v.document_id "
+        "WHERE d.id=%s AND d.workspace_id=%s AND d.owner_id=%s "
+        "AND (%s::bigint IS NULL OR v.revision<%s::bigint) "
+        "ORDER BY v.revision DESC LIMIT 51",
+        (document_id, workspace_id, resource["owner_id"], before_revision, before_revision),
+    ).fetchall()
+    if any(content_hash(row["ast"]) != row["content_hash"] for row in rows):
+        raise ApiError(503, "DOCUMENT_INTEGRITY_UNAVAILABLE", "历史版本当前不可用", retryable=True)
+    next_revision = rows[49]["revision"] if len(rows) > 50 else None
+    return {"items": [{key: value for key, value in row.items() if key != "ast"} |
+                      {"source": "template_create" if row["revision"] == 1 else "manual_edit"}
+                      for row in rows[:50]], "next_revision": next_revision}
+
+
+def read_version(conn, subject, workspace_id, document_id, version_id):
+    resource = _read_history_target(conn, subject, workspace_id, document_id)
+    row = conn.execute(
+        "SELECT d.id,d.workspace_id,d.document_type,d.knowledge_scope,d.template_version_id,"
+        "v.id AS version_id,v.revision,v.base_version_id,v.ast,v.content_hash "
+        "FROM document d JOIN document_version v ON v.document_id=d.id "
+        "WHERE d.id=%s AND d.workspace_id=%s AND d.owner_id=%s AND v.id=%s",
+        (document_id, workspace_id, resource["owner_id"], version_id),
+    ).fetchone()
+    if row is None:
+        raise ApiError(404, "DOCUMENT_VERSION_NOT_FOUND", "文档版本不存在或当前不可见")
+    if content_hash(row["ast"]) != row["content_hash"]:
+        raise ApiError(503, "DOCUMENT_INTEGRITY_UNAVAILABLE", "文档版本当前不可用", retryable=True)
+    return {"id": row["id"], "workspace_id": row["workspace_id"],
+            "name": row["ast"]["document"]["metadata"]["title"],
+            "document_type": row["document_type"], "knowledge_scope": row["knowledge_scope"],
+            "template_version_id": row["template_version_id"], "version_id": row["version_id"],
+            "base_version_id": row["base_version_id"], "revision": row["revision"],
+            "ast": row["ast"], "content_hash": row["content_hash"], "replayed": False}
+
+
 def save_document(conn, subject, workspace_id, document_id, command, request_id, trace_id):
     facts, resource = editable_document(conn, subject, workspace_id, document_id, exclusive=True)
     _local_write_target(conn)

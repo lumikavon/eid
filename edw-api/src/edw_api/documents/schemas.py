@@ -1,5 +1,6 @@
 """Bounded public wire models for template selection and initial document creation."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -164,6 +165,25 @@ class DocumentData(StrictModel):
 
 class DocumentResponse(StrictModel):
     data: DocumentData
+
+
+class DocumentVersionSummary(StrictModel):
+    id: UUID
+    revision: Annotated[int, Field(ge=1, le=9007199254740991)]
+    base_version_id: UUID | None
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_by: UUID
+    created_at: datetime
+    source: Literal["template_create", "manual_edit"]
+
+
+class DocumentVersionList(StrictModel):
+    items: list[DocumentVersionSummary]
+    next_revision: int | None
+
+
+class DocumentVersionListResponse(StrictModel):
+    data: DocumentVersionList
 
 
 def catalog_items(available):

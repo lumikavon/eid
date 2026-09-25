@@ -334,9 +334,17 @@ Response（字段示意，省略 AST 内部细节）：
 
 正文持久格式见 `contracts/document-ast-v1.schema.json`；编辑器 JSON/HTML 不是公共协议。`GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` 读取当前授权的文档头与 AST。服务端另行校验跨块稳定 ID、不可变元数据/审阅态、未来节点只读保留、危险链接以及图片当前引用权限。
 
-`PUT /api/v1/workspaces/{workspace_id}/documents/{document_id}` 以 `base_version_id`、`revision`、`ast` 提交整份草稿；需 Bearer 授权、当前 `document:edit`、未发布草稿及同一个 head。成功为 `200` + `{ "data": DocumentData }`，新增不可变 DocumentVersion，并在同一事务更新 head 和修订号；冲突返回 `409 DOC_VERSION_CONFLICT`，无权或已发布不可覆盖旧版。客户端在收到明确成功回执前不得提示已保存；本 Story 不提供三路合并。
+`PUT /api/v1/workspaces/{workspace_id}/documents/{document_id}` 以 `base_version_id`、`revision`、`ast` 提交整份草稿；需 Bearer 授权、当前 `document:edit`、未发布草稿及同一个 head。成功为 `200` + `{ "data": DocumentData }`，新增不可变 DocumentVersion，并在同一事务更新 head 和修订号；冲突返回 `409 DOC_VERSION_CONFLICT`，无权或已发布不可覆盖旧版。客户端在收到明确成功回执前不得提示已保存；2.3 在同一 CAS 写入口上补充了客户端三路冲突处理，不引入强制覆盖端点。
 
 `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/images` 接受 `{ "alt": "描述", "base64_data": "..." }`，只允许 PNG/JPEG/WebP 输入，经服务端解码并归一化为最多 5 MiB 的私有 PNG。成功 `201` 的 `data` 包含图片资源 UUID、SHA-256、尺寸和 alt；`figure.content.resource_id` 仅能引用同文档、当前有权且尺寸一致的资源，不接受远程 URL 或 data URL。`GET .../images/{media_id}` 每次复核当前读取权限和内容散列，返回 `image/png`、`Cache-Control: no-store`。上传在网络中断时可能处于未知状态，不应把未确认的上传当作保存成功。
+
+### 8.1b 授权历史与合并保存（Story 2.3）
+
+`GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/versions?before_revision=N` 以 revision 降序每页最多 50 条，`before_revision` 为排他的正整数游标；成功为 `200` + `{ "data": { "items": [VersionSummary], "next_revision": number|null } }`，列表契约见 `contracts/document-versions.schema.json`。`GET .../versions/{version_id}` 返回所选不可变版本的 `DocumentData`（正文仍是领域 AST）。两种读取都在当前 `resource:read`、工作区与文档归属检查下核验版本内容散列；不返回未经重新授权的历史正文，受保护响应 `Cache-Control: no-store`。
+
+客户端 1000ms 空闲保存及 Ctrl/Cmd+S 共用现有 PUT CAS；出现 409 时保留内存中的 base/local/latest，按稳定 ID 显示差异并要求重叠项逐项选择本地、服务端或人工 JSON，提交前仍以最新 head 再走 CAS。再次竞态须重新核对新版本并使旧选择失效；离线只保留内存草稿，超时/断线等提交结果未知时先重新读取 head 并核对版本及 AST，不得盲目重试或显示“已保存”。未确认更改离开时要求确认；权限撤回或 Published 禁止保存。
+
+保存响应 `Server-Timing: save;dur=<毫秒>` 是服务端处理阶段；客户端分别记录 `debounce_ms`、`client_request_ms`、`server_processing_ms`，其中空闲防抖不计入服务端处理时间。本阶段仅编译/静态验证，不宣称 P95 或真实环境验收。
 
 ### 8.2 生成文档计划
 

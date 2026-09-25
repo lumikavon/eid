@@ -1,0 +1,45 @@
+import {useEffect,useMemo,useRef,useState} from 'react';
+import type {WorkspaceAccess} from '../../app/access-api';
+import {getDocument,getDocumentVersion,getDocumentVersions,type DocumentData,type DocumentVersion,TemplateError} from './template-api';
+import {planMerge,type MergeChoice} from './domain-merge';
+import type {DomainAst} from './domain-adapter';
+
+type Props={current:WorkspaceAccess;documentId:string;base:DocumentData;local:DomainAst;mode:'history'|'conflict';onMerge:(ast:DomainAst,latest:DocumentData)=>Promise<boolean>;blocked:boolean;onReconcile:()=>Promise<void>;onClose:()=>void;onProtected:(error:unknown)=>void};
+function outline(doc:DocumentData|null){return doc?.ast.document.sections.map(section=><section key={section.id}><h4>{section.title}</h4>{section.blocks.map((value,index)=>{const block=value as {id?:string;type?:string;content?:Record<string,unknown>};return <p key={block.id??index}><small>{block.type} · {block.id}</small><br/>{String(block.content?.text??block.content?.statement??block.content?.alt??'（结构化内容）')}</p>})}</section>)}
+export default function VersionHistory({current,documentId,base,local,mode,onMerge,blocked,onReconcile,onClose,onProtected}:Props){
+ const [rows,setRows]=useState<DocumentVersion[]>([]);const [next,setNext]=useState<number|null>(null);
+ const [before,setBefore]=useState<DocumentData|null>(null);const [latest,setLatest]=useState<DocumentData|null>(null);
+ const [left,setLeft]=useState<DocumentData|null>(null);const [right,setRight]=useState<DocumentData|null>(null);
+ const [choices,setChoices]=useState<Record<string,MergeChoice>>({});const [manual,setManual]=useState<Record<string,string>>({});
+ const [error,setError]=useState('');const [notice,setNotice]=useState('');const [busy,setBusy]=useState(false);const [needsRefresh,setNeedsRefresh]=useState(false);const closeRef=useRef<HTMLButtonElement|null>(null);
+ const protectedRef=useRef(onProtected);protectedRef.current=onProtected;
+ const revoked=useRef(false);const mounted=useRef(true);const selectSequence=useRef({left:0,right:0});
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
+ const protection=useRef<(problem:unknown)=>void>(()=>{});
+ protection.current=problem=>{if(problem instanceof TemplateError&&['authentication','forbidden','missing'].includes(problem.failure)){
+  revoked.current=true;selectSequence.current.left++;selectSequence.current.right++;
+  setRows([]);setNext(null);setBefore(null);setLatest(null);setLeft(null);setRight(null);setChoices({});protectedRef.current(problem)
+ }};
+ useEffect(()=>{closeRef.current?.focus()},[]);
+ useEffect(()=>{
+  const controller=new AbortController();let active=true;
+  void Promise.all([getDocumentVersions(current,documentId,undefined,controller.signal),getDocumentVersion(current,documentId,base.version_id,controller.signal),getDocument(current,documentId,controller.signal)]).then(([page,older,newer])=>{
+   if(!active||revoked.current)return;setRows(page.items);setNext(page.next_revision);setBefore(older);setLatest(newer);setLeft(older);setRight(newer);setError('');
+  }).catch(problem=>{if(!active)return;setError(problem instanceof Error?problem.message:'历史版本不可用');protection.current(problem)});
+  return()=>{active=false;controller.abort()};
+ },[current,documentId,base.version_id]);
+ const plan=useMemo(()=>{if(!before||!latest)return null;try{return planMerge(before.ast as DomainAst,local,latest.ast as DomainAst,choices)}catch(problem){return problem instanceof Error?problem:new Error('结构不可安全合并')}},[before,latest,local,choices]);
+ const loadPage=async()=>{if(next===null)return;setBusy(true);try{const page=await getDocumentVersions(current,documentId,next);if(revoked.current||!mounted.current)return;setRows(previous=>[...previous,...page.items]);setNext(page.next_revision)}catch(problem){if(!mounted.current)return;setError(problem instanceof Error?problem.message:'历史记录不可用');protection.current(problem)}finally{setBusy(false)}};
+ const select=async(id:string,side:'left'|'right')=>{const sequence=++selectSequence.current[side];setBusy(true);try{const result=await getDocumentVersion(current,documentId,id);if(revoked.current||!mounted.current||sequence!==selectSequence.current[side])return;if(side==='left')setLeft(result);else setRight(result)}catch(problem){if(!mounted.current)return;if(problem instanceof TemplateError&&['authentication','forbidden','missing'].includes(problem.failure)){setError(problem.message);protection.current(problem);return}if(sequence!==selectSequence.current[side])return;setError(problem instanceof Error?problem.message:'版本不可用')}finally{if(mounted.current&&sequence===selectSequence.current[side])setBusy(false)}};
+ const updateChoice=(key:string,strategy:MergeChoice['strategy'])=>{setChoices(previous=>({...previous,[key]:{strategy}}));if(strategy==='manual')setManual(previous=>({...previous,[key]:previous[key]??JSON.stringify(plan&&!(plan instanceof Error)?plan.conflicts.find(item=>item.key===key)?.local:null,null,2)}))};
+ const updateManual=(key:string,value:string)=>{setManual(previous=>({...previous,[key]:value}));try{const parsed=JSON.parse(value);setChoices(previous=>({...previous,[key]:{strategy:'manual',manual:parsed}}));setError('')}catch{setChoices(previous=>({...previous,[key]:{strategy:'manual'}}));setError('人工合并内容必须是合法 JSON')}};
+ const submit=async()=>{if(!latest||!plan||plan instanceof Error||plan.unresolved.length||busy)return;setBusy(true);try{const complete=await onMerge(plan.ast,latest);if(complete)onClose();else{setNeedsRefresh(true);setError('再次发生版本冲突；保留选择，请重新获取最新版本')}}catch(problem){setError(problem instanceof Error?problem.message:'合并未保存')}finally{setBusy(false)}};
+ const refresh=async()=>{setBusy(true);try{const newer=await getDocument(current,documentId);if(revoked.current||!mounted.current)return;if(newer.version_id!==latest?.version_id){setChoices({});setNotice('最新版本已变化，旧合并决定已失效；人工输入草稿保留，请逐项重新确认')}setLatest(newer);setRight(newer);setNeedsRefresh(false);setError('');}catch(problem){setError(problem instanceof Error?problem.message:'无法读取最新版本');protection.current(problem)}finally{setBusy(false)}};
+ return <div className="version-mask"><div role="dialog" aria-modal="true" aria-label={mode==='conflict'?'版本冲突与合并':'文档版本历史'} className="version-dialog">
+  <header><h2>{mode==='conflict'?'版本冲突 · 保留本地草稿':'版本历史与比较'}</h2><button ref={closeRef} onClick={onClose} aria-label="关闭版本视图">关闭</button></header>
+  {error&&<p role="alert" className="template-form-error">{error}</p>}{notice&&<p role="status">{notice}</p>}
+  <section aria-label="历史版本"><h3>版本记录</h3><ol>{rows.map(item=><li key={item.id}>v{item.revision} · {item.source==='template_create'?'模板创建':'人工编辑'} · {item.created_at} · {item.created_by} · {item.content_hash.slice(0,12)}</li>)}</ol>{next!==null&&<button disabled={busy} onClick={()=>void loadPage()}>加载更多</button>}</section>
+  <section aria-label="版本对比"><h3>两个授权版本对比</h3><label>左侧版本<select value={left?.version_id??''} onChange={event=>void select(event.target.value,'left')} disabled={busy}>{left&&!rows.some(item=>item.id===left.version_id)&&<option value={left.version_id}>v{left.revision}（当前页外）</option>}{rows.map(item=><option key={item.id} value={item.id}>v{item.revision}</option>)}</select></label><label>右侧版本<select value={right?.version_id??''} onChange={event=>void select(event.target.value,'right')} disabled={busy}>{right&&!rows.some(item=>item.id===right.version_id)&&<option value={right.version_id}>v{right.revision}（当前页外）</option>}{rows.map(item=><option key={item.id} value={item.id}>v{item.revision}</option>)}</select></label><div className="version-panes"><div>{outline(left)}</div><div>{outline(right)}</div></div></section>
+  {mode==='conflict'&&<section aria-label="三路冲突合并"><h3>Base / 本地 / 最新 · 逐块选择</h3>{plan instanceof Error?<p role="alert">{plan.message}</p>:plan&&<><p>{plan.conflicts.length} 项冲突，{plan.unresolved.length} 项待选择；无冲突更改均保留。</p>{plan.conflicts.map(item=><fieldset key={item.key}><legend>{item.label}</legend><div className="version-panes"><pre>Base: {JSON.stringify(item.base,null,2)}</pre><pre>本地: {JSON.stringify(item.local,null,2)}</pre><pre>最新: {JSON.stringify(item.latest,null,2)}</pre></div><label><input type="radio" name={item.key} checked={choices[item.key]?.strategy==='mine'} onChange={()=>updateChoice(item.key,'mine')}/>保留本地</label><label><input type="radio" name={item.key} checked={choices[item.key]?.strategy==='latest'} onChange={()=>updateChoice(item.key,'latest')}/>使用最新</label><label><input type="radio" name={item.key} checked={choices[item.key]?.strategy==='manual'} onChange={()=>updateChoice(item.key,'manual')}/>人工合并</label>{choices[item.key]?.strategy==='manual'&&<textarea aria-label={`${item.label}人工合并值`} value={manual[item.key]??''} onChange={event=>updateManual(item.key,event.target.value)}/>}</fieldset>)}<button disabled={busy||blocked||needsRefresh||plan.unresolved.length>0||!!error} onClick={()=>void submit()}>按最新版本检查并保存合并</button>{blocked&&<button disabled={busy} onClick={()=>void onReconcile()}>先核对未确认的原提交</button>}<button disabled={busy} onClick={()=>void refresh()}>重新获取最新版本</button></>}</section>}
+ </div></div>;
+}

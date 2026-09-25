@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from edw_api.access.policy import AccessDenied
-from edw_api.documents.domain import initial_ast
+from edw_api.documents.domain import content_hash, initial_ast
 from edw_api.documents.editor_domain import InvalidAst, validate_ast
 from edw_api.documents import editor_repository
 from edw_api.documents.editor_routes import SaveDocument
@@ -185,3 +185,55 @@ def test_revoked_or_published_document_rejects_before_write(monkeypatch):
     with pytest.raises(ApiError) as error:
         editor_repository.editable_document(object(), "subject", WORKSPACE, DOCUMENT)
     assert error.value.status_code == 409
+
+def test_history_is_scoped_to_current_read_grant_and_document_owner(monkeypatch):
+    monkeypatch.setattr(editor_repository, "_read_history_target",
+                        lambda *_args: {"owner_id": ACTOR})
+    class Connection:
+        def execute(self, sql, params):
+            assert "d.workspace_id=%s AND d.owner_id=%s" in sql
+            assert params[:3] == (DOCUMENT, WORKSPACE, ACTOR)
+            class Result:
+                def fetchall(self):
+                    prior = ast()
+                    return [{"id": uuid4(), "revision": revision, "base_version_id": VERSION,
+                             "content_hash": content_hash(prior), "ast": prior, "created_by": ACTOR,
+                             "created_at": datetime.now(timezone.utc)} for revision in range(51, 0, -1)]
+            return Result()
+    page = editor_repository.list_versions(Connection(), "subject", WORKSPACE, DOCUMENT)
+    assert len(page["items"]) == 50
+    assert page["next_revision"] == page["items"][-1]["revision"] == 2
+    assert page["items"][0]["source"] == "manual_edit"
+
+
+def test_historic_version_reauthorizes_and_rejects_cross_document_or_corrupt_ast(monkeypatch):
+    monkeypatch.setattr(editor_repository, "_read_history_target",
+                        lambda *_args: {"owner_id": ACTOR})
+    class Connection:
+        def __init__(self, row):
+            self.row = row
+        def execute(self, sql, params):
+            assert "v.document_id=d.id" in sql and "d.owner_id=%s" in sql
+            assert params == (DOCUMENT, WORKSPACE, ACTOR, VERSION)
+            class Result:
+                def __init__(self, value):
+                    self.value = value
+                def fetchone(self):
+                    return self.value
+            return Result(self.row)
+    with pytest.raises(ApiError) as missing:
+        editor_repository.read_version(Connection(None), "subject", WORKSPACE, DOCUMENT, VERSION)
+    assert missing.value.status_code == 404
+    prior = ast()
+    row = {"id": DOCUMENT, "workspace_id": WORKSPACE, "document_type": "technical_solution",
+           "knowledge_scope": "project_only", "template_version_id": TEMPLATE,
+           "version_id": VERSION, "revision": 1, "base_version_id": None,
+           "ast": prior, "content_hash": "0" * 64}
+    with pytest.raises(ApiError) as corrupt:
+        editor_repository.read_version(Connection(row), "subject", WORKSPACE, DOCUMENT, VERSION)
+    assert corrupt.value.status_code == 503
+    monkeypatch.setattr(editor_repository, "_read_history_target",
+                        lambda *_args: (_ for _ in ()).throw(ApiError(404, "DOCUMENT_NOT_FOUND", "hidden")))
+    with pytest.raises(ApiError) as revoked:
+        editor_repository.read_version(Connection(row), "subject", WORKSPACE, DOCUMENT, VERSION)
+    assert revoked.value.status_code == 404

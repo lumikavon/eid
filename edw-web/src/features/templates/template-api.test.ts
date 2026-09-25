@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,test,vi} from 'vitest';
-import {createDocument,getDocument,getImage,getTemplateDetail,getTemplates,getTypeCatalog,saveDocument,uploadImage,TemplateError,validateCreate,type CreateDocument} from './template-api';
+import {createDocument,getDocument,getDocumentVersion,getDocumentVersions,getImage,getTemplateDetail,getTemplates,getTypeCatalog,saveDocument,uploadImage,TemplateError,validateCreate,type CreateDocument,type SaveTiming} from './template-api';
 
 const auth=vi.hoisted(()=>({value:'memory-only'}));
 vi.mock('../../auth/oidc',()=>({token:()=>auth.value}));
@@ -101,4 +101,29 @@ test('image upload and read use scoped bearer authorization and strict receipts'
  expect((await getImage(current,documentId,imageId)).type).toBe('image/png');
  const [readPath,readOptions]=vi.mocked(fetch).mock.calls.at(-1)!;expect(String(readPath)).toContain(`/images/${imageId}`);
  expect(readOptions?.headers).toMatchObject({Authorization:'Bearer memory-only'});
+});
+
+test('version history is scoped, paginated and does not accept another document response',async()=>{
+ const row={id:documentVersion,revision:1,base_version_id:null,content_hash:'a'.repeat(64),created_by:actor,created_at:'2026-09-24T12:00:00Z',source:'template_create'};
+ respond({items:[row],next_revision:null});
+ const page=await getDocumentVersions(current,documentId);expect(page.items[0].id).toBe(documentVersion);
+ respond(doc);expect((await getDocumentVersion(current,documentId,documentVersion)).version_id).toBe(documentVersion);
+ respond({...doc,id:actor});await expect(getDocumentVersion(current,documentId,documentVersion)).rejects.toMatchObject({failure:'invalid-response'});
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{code:'DOCUMENT_NOT_FOUND'}}),{status:404}));
+ await expect(getDocumentVersion(current,documentId,documentVersion)).rejects.toMatchObject({failure:'missing'});
+});
+
+test('save telemetry separates idle debounce, request and server durations',async()=>{
+ const events:SaveTiming[]=[];const command={base_version_id:documentVersion,revision:1,ast:{...doc.ast,schema_version:'1.0' as const}};
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({data:{...doc,version_id:version,base_version_id:documentVersion,revision:2}}),{status:200,headers:{'Server-Timing':'save;dur=12.4'}}));
+ await saveDocument(current,documentId,command,undefined,event=>events.push(event),1000);
+ expect(events).toHaveLength(1);expect(events[0]).toMatchObject({debounce_ms:1000,server_processing_ms:12.4,outcome:'confirmed'});
+ expect(events[0].client_request_ms).toBeGreaterThanOrEqual(0);
+});
+
+test('known service rejection is not an uncertain save result',async()=>{
+ const events:SaveTiming[]=[];const command={base_version_id:documentVersion,revision:1,ast:{...doc.ast,schema_version:'1.0' as const}};
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{code:'POLICY_UNAVAILABLE'}}),{status:503}));
+ await expect(saveDocument(current,documentId,command,undefined,event=>events.push(event))).rejects.toMatchObject({failure:'unavailable',status:503});
+ expect(events).toHaveLength(1);expect(events[0].outcome).toBe('rejected');
 });
