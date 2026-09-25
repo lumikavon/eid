@@ -71,7 +71,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-24-2026 12:29"
+last_updated: "09-24-2026 20:21"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -91,7 +91,7 @@ development_status:
   # Epic 2: 6 L-delivery stories; source epic-2-controlled-authoring.md
   epic-2: in-progress
   2-1-template-creation: done # 软件门禁/独立源码审查完成；测试、数据库与真实运行验收 not-run
-  2-2-domain-editor: backlog
+  2-2-domain-editor: done # 软件实现/静态编译/独立源码审查完成；测试、迁移、DB/S3/服务/浏览器及现场验收 not-run
   2-3-version-conflicts: backlog
   2-4-template-governance: backlog
   2-5-project-context: backlog

@@ -19,6 +19,6 @@ test('template center preserves P-07 controls and marks development catalog',()=
  const html=render();expect(html).toContain('id="templateSearch"');expect(html).toContain('id="templateGrid"');expect(html).toContain('按文种筛选');expect(html).toContain('产品线');expect(html).toContain('个人草稿');expect(html).toContain('开发样例');expect(html).toContain('项目技术方案');expect(html).not.toContain('正式模板');
  expect(calls.keys.every(key=>String(key[1]).includes(`${aid}:${wid}:4:2:4`))).toBe(true);
 });
-test('new document opens its own AST in a read-only view',()=>{
- const html=render(did);expect(html).toContain(did);expect(html).toContain('项目概述');expect(html).toContain('模板版本');expect(html).toContain('当前仅支持查看初始结构');expect(html).not.toContain('contenteditable');
+test('new document opens its own AST-backed editing shell without claiming a save',()=>{
+ const html=render(did);expect(html).toContain(did);expect(html).toContain('id="docTree"');expect(html).toContain('项目概述');expect(html).toContain('id="docTitle"');expect(html).toContain('领域 AST 草稿');expect(html).toContain('已加载，尚未修改');expect(html).not.toContain('已保存 · 版本');
 });

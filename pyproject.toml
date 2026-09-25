@@ -8,6 +8,7 @@ dependencies = [
   "celery==5.5.3",
   "fastapi==0.141.1",
   "httpx==0.28.1",
+  "pillow==11.3.0",
   "psycopg[binary,pool]==3.2.10",
   "pydantic-settings==2.10.1",
   "pyjwt[crypto]==2.13.0",

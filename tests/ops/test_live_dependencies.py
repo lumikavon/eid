@@ -103,7 +103,7 @@ def test_worker_identity_can_read_metadata_but_not_identity_workspace_data():
         development_database_url("eid_worker").replace("postgresql+psycopg:", "postgresql:"),
         connect_timeout=3,
     ) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0011_template_creation",)]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0012_domain_editor",)]
         for table in ("identity_account", "workspace", "workspace_membership"):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 conn.execute(f"SELECT * FROM {table} LIMIT 0")

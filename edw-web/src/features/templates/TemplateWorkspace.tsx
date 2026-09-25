@@ -3,6 +3,7 @@ import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {useLocation,useNavigate} from 'react-router-dom';
 import type {WorkspaceAccess} from '../../app/access-api';
 import {createDocument,getDocument,getTemplateDetail,getTemplates,getTypeCatalog,TemplateError,templateScopes,type CreateDocument,type DocumentType,type TemplateCard,type TemplateFilters,type TemplateScope} from './template-api';
+import DomainEditor from './DomainEditor';
 import './templates.css';
 
 type Props={current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void};
@@ -22,10 +23,10 @@ function DocumentView({current,documentId,onReject,onRefresh}:Props&{documentId:
  const fatal=document.error instanceof TemplateError&&protectedFailure(document.error)?document.error:null;
  useLayoutEffect(()=>{if(!fatal||handled.current===fatal)return;handled.current=fatal;setBlocked(true);if(fatal.failure==='authentication')onReject(fatal);else onRefresh()},[fatal,onReject,onRefresh]);
  useEffect(()=>{if(blocked)clearTemplateQueries(cache)},[blocked,cache]);
- const value=!blocked&&!fatal&&!document.isFetching&&!document.error?document.data:undefined;
+ const value=!blocked&&!fatal?document.data:undefined;
  return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>navigate(`${base}/documents`)}>返回项目文档</button></header>
   {blocked||fatal?<div className="template-state" role="alert"><p>{errorText(fatal??document.error??new Error('当前权限已变化，请重新读取'))}</p><button className="btn" onClick={()=>{setBlocked(false);void document.refetch()}}>重新读取</button></div>:document.isFetching||document.isPending?<p className="template-state" role="status">正在读取当前授权文档…</p>:document.error?<div className="template-state" role="alert"><p>{errorText(document.error)}</p><button className="btn" onClick={()=>void document.refetch()}>重新读取</button></div>:null}
-  {value&&<div className="editor-layout"><section className="editor-main"><div className="doc-top"><b>初始草稿</b><span>版本 {value.version_id}</span><span>修订 {value.revision}</span></div><div className="doc-toolbar" aria-label="只读文档工具栏">当前仅支持查看初始结构；编辑与保存将在 Story 2.2/2.3 开放</div><div className="doc-scroll"><article className="paper" aria-label="文档初始 AST，只读"><h1>{String(value.ast.document.metadata.title)}</h1><div className="doc-meta"><span>模板版本 {value.template_version_id}</span><span>文种 {fallbackTypes[value.document_type]}</span></div>{value.ast.document.sections.map(section=><section key={section.id}><h2>{section.title}</h2>{section.blocks.map((block,index)=><p key={typeof block==='object'&&block!==null&&'id' in block?String(block.id):index}>{typeof block==='object'&&block!==null&&'content' in block&&typeof block.content==='object'&&block.content!==null&&'text' in block.content?String(block.content.text)||'（待填写）':'（结构内容待编辑器支持）'}</p>)}</section>)}</article></div></section><aside className="ai-side"><div className="ai-tabs"><button className="active" disabled>文档结构</button></div><div className="ai-body"><p>此文档有独立 ID 和固定模板版本。当前内容来自服务端 AST。</p><ol className="outline-list">{value.ast.document.sections.map(section=><li key={section.id}>{section.title}</li>)}</ol><p>文种目录不代表专属流程已经开放。</p></div></aside></div>}
+  {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh}/>}
  </div>;
 }
 function CatalogView({current,onReject,onRefresh}:Props){

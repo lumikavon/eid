@@ -28,6 +28,7 @@ from .errors import ApiError
 from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
 from .documents.routes import create_canonical_router, create_router as create_document_router
+from .documents.editor_routes import create_router as create_editor_router
 from .tasks.routes import create_router as create_task_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
@@ -44,6 +45,7 @@ app = FastAPI(title="EID API", version="0.1.0")
 app.include_router(create_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_document_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_editor_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_canonical_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
@@ -221,7 +223,8 @@ def _postgres_status() -> str:
                            ('document','SELECT'), ('document','INSERT'),
                            ('document_version','SELECT'), ('document_version','INSERT'),
                            ('document_creation_receipt','SELECT'),
-                           ('document_creation_receipt','INSERT')
+                           ('document_creation_receipt','INSERT'),
+                           ('document_media','SELECT'), ('document_media','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
                            privilege
@@ -260,6 +263,12 @@ def _postgres_status() -> str:
                 AND NOT has_table_privilege(current_user,'document_knowledge_scope_grant','UPDATE')
                 AND NOT has_table_privilege(current_user,'access_resource','INSERT')
                 AND NOT has_table_privilege(current_user,'discovery_record','INSERT')
+                AND NOT has_table_privilege(current_user,'document','UPDATE')
+                AND NOT has_table_privilege(current_user,'access_resource','UPDATE')
+                AND has_column_privilege(current_user,'document','head_version_id','UPDATE')
+                AND has_column_privilege(current_user,'document','revision','UPDATE')
+                AND has_column_privilege(current_user,'access_resource','title','UPDATE')
+                AND has_column_privilege(current_user,'access_resource','head_ref','UPDATE')
                 AND NOT has_function_privilege(current_user,
                     'eid_task_cancel_v2(uuid,uuid,text)', 'EXECUTE')
                 AND NOT has_function_privilege(current_user,
@@ -287,6 +296,7 @@ def _postgres_status() -> str:
                 AND NOT has_table_privilege('eid_worker','template_version','SELECT')
                 AND NOT has_table_privilege('eid_worker','document_version','SELECT')
                 AND NOT has_table_privilege('eid_worker','document','INSERT')
+                AND NOT has_table_privilege('eid_worker','document_media','SELECT')
                 FROM resolved
                 """
             ).fetchone()[0]

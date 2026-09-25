@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,test,vi} from 'vitest';
-import {createDocument,getDocument,getTemplateDetail,getTemplates,getTypeCatalog,TemplateError,validateCreate,type CreateDocument} from './template-api';
+import {createDocument,getDocument,getImage,getTemplateDetail,getTemplates,getTypeCatalog,saveDocument,uploadImage,TemplateError,validateCreate,type CreateDocument} from './template-api';
 
 const auth=vi.hoisted(()=>({value:'memory-only'}));
 vi.mock('../../auth/oidc',()=>({token:()=>auth.value}));
@@ -76,4 +76,29 @@ test('invalid create input is rejected before any network write',async()=>{
 test('invalid workspace policy context fails closed before reading protected AST',async()=>{
  await expect(getDocument({...current,policy_epoch:[5,2,4]},documentId)).rejects.toMatchObject({failure:'context'});
  expect(fetch).not.toHaveBeenCalled();
+});
+
+test('save uses PUT with CAS and accepts only matching confirmed next version',async()=>{
+ const command={base_version_id:documentVersion,revision:1,ast:{...doc.ast,schema_version:'1.0' as const}};
+ respond({...doc,version_id:version,base_version_id:documentVersion,revision:2});
+ const saved=await saveDocument(current,documentId,command);expect(saved.revision).toBe(2);
+ const [path,options]=vi.mocked(fetch).mock.calls[0];expect(path).toBe(`/api/v1/workspaces/${workspace}/documents/${documentId}`);
+ expect(options?.method).toBe('PUT');expect(options?.headers).not.toHaveProperty('Idempotency-Key');
+ expect(JSON.parse(String(options?.body))).toEqual(command);
+ respond({...doc,version_id:version,base_version_id:documentVersion,revision:1});
+ await expect(saveDocument(current,documentId,command)).rejects.toMatchObject({failure:'invalid-response'});
+ vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({error:{code:'DOC_VERSION_CONFLICT'}}),{status:409}));
+ await expect(saveDocument(current,documentId,command)).rejects.toMatchObject({failure:'conflict'});
+});
+
+test('image upload and read use scoped bearer authorization and strict receipts',async()=>{
+ const imageId='00000000-0000-4000-8000-000000000008';
+ respond({id:imageId,content_hash:'b'.repeat(64),content_type:'image/png',byte_length:4,alt:'照片',width:2,height:2},201);
+ const receipt=await uploadImage(current,documentId,new Uint8Array([1,2,3,4]),'照片');expect(receipt.id).toBe(imageId);
+ const [uploadPath,uploadOptions]=vi.mocked(fetch).mock.calls[0];expect(String(uploadPath)).toContain(`/documents/${documentId}/images`);
+ expect(uploadOptions?.headers).toMatchObject({Authorization:'Bearer memory-only'});
+ vi.mocked(fetch).mockResolvedValue(new Response(new Uint8Array([137,80,78,71]),{headers:{'Content-Type':'image/png'}}));
+ expect((await getImage(current,documentId,imageId)).type).toBe('image/png');
+ const [readPath,readOptions]=vi.mocked(fetch).mock.calls.at(-1)!;expect(String(readPath)).toContain(`/images/${imageId}`);
+ expect(readOptions?.headers).toMatchObject({Authorization:'Bearer memory-only'});
 });

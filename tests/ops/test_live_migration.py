@@ -47,7 +47,8 @@ NEW_0010_TABLES = {"task_notification", "task_observation_binding"}
 NEW_0011_TABLES = {"template", "template_version", "template_version_state",
                    "template_workspace", "document_knowledge_scope_grant",
                    "document", "document_version", "document_creation_receipt"}
-REQUIRED_TABLES = REQUIRED_0008_TABLES | NEW_0009_TABLES | NEW_0010_TABLES | NEW_0011_TABLES
+NEW_0012_TABLES = {"document_media"}
+REQUIRED_TABLES = REQUIRED_0008_TABLES | NEW_0009_TABLES | NEW_0010_TABLES | NEW_0011_TABLES | NEW_0012_TABLES
 
 
 def _public_state(connection):
@@ -208,7 +209,7 @@ def test_checked_in_migration_builds_clean_isolated_schema_and_rolls_back(legacy
 
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalar_one() == "0011_template_creation"
+            ).scalar_one() == "0012_domain_editor"
             assert set(
                 connection.execute(
                     sa.text(

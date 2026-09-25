@@ -330,6 +330,14 @@ Response（字段示意，省略 AST 内部细节）：
 
 上述 AST 仅为结构示意，实际章节来自所选模板版本，不可按空章节示意写入。客户端也可使用 `POST /api/v1/workspaces/{workspace_id}/documents`，此时请求体省去 `workspace_id`，其余必填字段及幂等头不变。规范路径暂兼容旧形状的 `title + template_id`（模板家族 ID，服务端在提交时选择最新可用版本），该形状的 `knowledge_scope` 可省略、默认 `project_only`；`title` 与新形状的 `name` 均映射为文档名称。但旧形状**不能固定用户预览的版本**，新客户端必须使用以上显式 `template_version_id` 形状。模板卡片的 `version_id` 对应请求和文档的 `template_version_id`；文档响应的 `version_id` 则是新文档初始版本，不是模板版本。
 
+### 8.1a 领域 AST 编辑与受控图片（Story 2.2）
+
+正文持久格式见 `contracts/document-ast-v1.schema.json`；编辑器 JSON/HTML 不是公共协议。`GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` 读取当前授权的文档头与 AST。服务端另行校验跨块稳定 ID、不可变元数据/审阅态、未来节点只读保留、危险链接以及图片当前引用权限。
+
+`PUT /api/v1/workspaces/{workspace_id}/documents/{document_id}` 以 `base_version_id`、`revision`、`ast` 提交整份草稿；需 Bearer 授权、当前 `document:edit`、未发布草稿及同一个 head。成功为 `200` + `{ "data": DocumentData }`，新增不可变 DocumentVersion，并在同一事务更新 head 和修订号；冲突返回 `409 DOC_VERSION_CONFLICT`，无权或已发布不可覆盖旧版。客户端在收到明确成功回执前不得提示已保存；本 Story 不提供三路合并。
+
+`POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/images` 接受 `{ "alt": "描述", "base64_data": "..." }`，只允许 PNG/JPEG/WebP 输入，经服务端解码并归一化为最多 5 MiB 的私有 PNG。成功 `201` 的 `data` 包含图片资源 UUID、SHA-256、尺寸和 alt；`figure.content.resource_id` 仅能引用同文档、当前有权且尺寸一致的资源，不接受远程 URL 或 data URL。`GET .../images/{media_id}` 每次复核当前读取权限和内容散列，返回 `image/png`、`Cache-Control: no-store`。上传在网络中断时可能处于未知状态，不应把未确认的上传当作保存成功。
+
 ### 8.2 生成文档计划
 
 ```http
