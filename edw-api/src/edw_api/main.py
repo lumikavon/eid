@@ -29,6 +29,7 @@ from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
 from .documents.routes import create_canonical_router, create_router as create_document_router
 from .documents.editor_routes import create_router as create_editor_router
+from .documents.governance_routes import create_router as create_governance_router
 from .tasks.routes import create_router as create_task_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
@@ -46,6 +47,7 @@ app.include_router(create_router(settings, lambda token: verifier.verify(token))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_document_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_editor_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_canonical_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
@@ -224,7 +226,16 @@ def _postgres_status() -> str:
                            ('document_version','SELECT'), ('document_version','INSERT'),
                            ('document_creation_receipt','SELECT'),
                            ('document_creation_receipt','INSERT'),
-                           ('document_media','SELECT'), ('document_media','INSERT')
+                           ('document_media','SELECT'), ('document_media','INSERT'),
+                           ('template_governed_family','SELECT'), ('template_governed_family','INSERT'),
+                           ('template_version_policy','SELECT'), ('template_version_policy','INSERT'),
+                           ('template_candidate','SELECT'), ('template_candidate','INSERT'),
+                           ('template_validation','SELECT'),
+                           ('template_governance_receipt','SELECT'), ('template_governance_receipt','INSERT'),
+                           ('template_governance_action_receipt','SELECT'),
+                           ('template_governance_action_receipt','INSERT'),
+                           ('template','INSERT'), ('template_version','INSERT'),
+                           ('template_version_state','INSERT'), ('template_workspace','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
                            privilege
@@ -257,6 +268,10 @@ def _postgres_status() -> str:
                     'eid_lock_document_knowledge_scope_v1(uuid,text)', 'EXECUTE')
                 AND has_function_privilege(current_user,
                     'eid_lock_template_creation_v1(uuid,uuid)', 'EXECUTE')
+                AND has_function_privilege(current_user,
+                    'eid_deprecate_template_version_v1(uuid,uuid,uuid)', 'EXECUTE')
+                AND NOT has_table_privilege(current_user,'template_validation','UPDATE')
+                AND NOT has_table_privilege(current_user,'template_candidate','UPDATE')
                 AND NOT has_table_privilege(current_user,'template','UPDATE')
                 AND NOT has_table_privilege(current_user,'template_version_state','UPDATE')
                 AND NOT has_table_privilege(current_user,'template_workspace','UPDATE')

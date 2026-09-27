@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/template-governance.schema.json",
+  "title": "Template governance v1 (development-only)",
+  "description": "All paths are relative to /api/v1/workspaces/{workspace_id}/template-governance. Authorized reads return {data:...}, and protected writes require an Idempotency-Key. The package is a bounded application/zip body with query metadata; it is never executed in the API process. Formal mode fails closed until approved registries exist. No endpoint deletes versions or rewrites pinned document references.",
+  "type": "object",
+  "properties": {
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "version": {"$ref": "#/$defs/version"},
+    "references": {"$ref": "#/$defs/references"},
+    "operation": {"$ref": "#/$defs/operation"}
+  },
+  "$defs": {
+    "operation": {"oneOf": [{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"unresolved"}}},{"type":"object","required":["kind","candidate"],"properties":{"kind":{"const":"candidate"},"candidate":{"$ref":"#/$defs/candidate"}}},{"type":"object","required":["kind","version"],"properties":{"kind":{"const":"version"},"version":{"$ref":"#/$defs/version"}}}]},
+    "uuid": {"type": "string", "format": "uuid"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id","template_id","workspace_id","version_label","scope","classification","base_version_id","created_at","state","error_code","attempt","updated_at","development_only","published_version_id","head_version_id","preview"],
+      "properties": {
+        "id":{"$ref":"#/$defs/uuid"},"template_id":{"$ref":"#/$defs/uuid"},"workspace_id":{"$ref":"#/$defs/uuid"},
+        "version_label":{"type":"string"},"scope":{"enum":["enterprise","department","product_line","project","personal"]},
+        "classification":{"type":"integer","minimum":0,"maximum":3},"base_version_id":{"anyOf":[{"$ref":"#/$defs/uuid"},{"type":"null"}]},
+        "created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"},
+        "state":{"enum":["QUEUED","RUNNING","VALIDATED","REJECTED","BLOCKED"]},
+        "error_code":{"type":["string","null"]},"attempt":{"type":"integer","minimum":0,"maximum":3},
+        "development_only":{"const":true},"published_version_id":{"anyOf":[{"$ref":"#/$defs/uuid"},{"type":"null"}]},"head_version_id":{"anyOf":[{"$ref":"#/$defs/uuid"},{"type":"null"}]},
+        "preview":{"anyOf":[{"type":"null"},{"type":"object","required":["manifest","manifest_sha256","assets","formal_ready","formal_blockers"],"properties":{"manifest":{"$ref":"template-package-v1.schema.json"},"manifest_sha256":{"$ref":"#/$defs/digest"},"assets":{"type":"array","maxItems":15,"items":{"type":"object","required":["name","source_sha256","sha256","width","height"],"properties":{"name":{"type":"string"},"source_sha256":{"$ref":"#/$defs/digest"},"sha256":{"$ref":"#/$defs/digest"},"width":{"type":"integer"},"height":{"type":"integer"}}}},"formal_ready":{"const":false},"formal_blockers":{"type":"array","minItems":1,"items":{"type":"string"}}}}]}
+      }
+    },
+    "version": {"type":"object","required":["id","template_id","version_label","name","scope","classification","structure","status","rule_refs","manifest_sha256","candidate_id","published_at","published_by","development_only"],"properties":{"id":{"$ref":"#/$defs/uuid"},"template_id":{"$ref":"#/$defs/uuid"},"candidate_id":{"$ref":"#/$defs/uuid"},"published_by":{"$ref":"#/$defs/uuid"},"published_at":{"type":"string","format":"date-time"},"version_label":{"type":"string","minLength":1,"maxLength":128},"name":{"type":"string","minLength":1,"maxLength":256},"scope":{"enum":["enterprise","department","product_line","project","personal"]},"classification":{"type":"integer","minimum":0,"maximum":3},"rule_refs":{"$ref":"template-package-v1.schema.json"},"status":{"enum":["active","deprecated"]},"development_only":{"const":true},"manifest_sha256":{"$ref":"#/$defs/digest"},"structure":{"type":"object","required":["sections"],"properties":{"sections":{"type":"array","items":{"type":"object","required":["title"],"properties":{"title":{"type":"string","minLength":1,"maxLength":256}}}}}}}},
+    "references": {"type":"object","required":["items","next_cursor","scope"],"properties":{"scope":{"const":"currently_authorized_documents_only"},"next_cursor":{"anyOf":[{"$ref":"#/$defs/uuid"},{"type":"null"}]},"items":{"type":"array","maxItems":100,"items":{"type":"object","required":["document_id","name","template_version_id"],"properties":{"document_id":{"$ref":"#/$defs/uuid"},"template_version_id":{"$ref":"#/$defs/uuid"},"name":{"type":"string"}}}}}}
+  }
+}

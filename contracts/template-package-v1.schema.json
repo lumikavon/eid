@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/template-package-v1.schema.json",
+  "title": "Restricted development template package manifest",
+  "description": "manifest.json at ZIP root; only explicitly listed raster assets/*.png|jpg|jpeg|webp are accepted. Syntax does not grant publication or verify official policy references. Unknown keys and executable content are rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "description", "category", "document_type", "sections", "rules", "assets"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "description": {"type": "string", "maxLength": 1024},
+    "category": {"type": "string", "minLength": 1, "maxLength": 128},
+    "document_type": {"enum": ["technical_solution", "bid", "prd", "test_plan", "project_summary", "technical_requirements", "quality_outline", "project_plan", "functional_test_outline", "performance_test_outline", "production_form"]},
+    "sections": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "object", "additionalProperties": false, "required": ["id", "title", "mandatory"], "properties": {"id": {"type": "string", "format": "uuid"}, "title": {"type": "string", "minLength": 1, "maxLength": 256}, "mandatory": {"type": "boolean"}}}},
+    "rules": {"type": "object", "additionalProperties": false, "required": ["retrieval_profile_id", "prompt_version_id", "reviewer_rule_version_id", "render_theme_version_id", "approval_policy_version_id"], "properties": {"retrieval_profile_id": {"$ref": "#/$defs/nullableUuid"}, "prompt_version_id": {"$ref": "#/$defs/nullableUuid"}, "reviewer_rule_version_id": {"$ref": "#/$defs/nullableUuid"}, "render_theme_version_id": {"$ref": "#/$defs/nullableUuid"}, "approval_policy_version_id": {"$ref": "#/$defs/nullableUuid"}}},
+    "assets": {"type": "array", "maxItems": 15, "uniqueItems": true, "items": {"type": "string", "pattern": "^assets/[a-z0-9][a-z0-9._-]{0,80}\\.(png|jpg|jpeg|webp)$"}}
+  },
+  "$defs": {"nullableUuid": {"oneOf": [{"type": "string", "format": "uuid"}, {"type": "null"}]}}
+}

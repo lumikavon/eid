@@ -1,7 +1,11 @@
 FROM python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 ARG EID_SOURCE_FINGERPRINT
 LABEL io.eid.source-fingerprint="${EID_SOURCE_FINGERPRINT}"
-RUN groupadd --system eid && useradd --system --gid eid --create-home eid
+# Template validation fails closed without an OS namespace and network boundary.
+# Bubblewrap must run rootless; availability of user namespaces is a deferred runtime gate.
+RUN apt-get update && apt-get install --no-install-recommends -y bubblewrap \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system eid && useradd --system --gid eid --create-home eid
 WORKDIR /workspace
 COPY pyproject.toml uv.lock ./
 COPY edw-api/pyproject.toml edw-api/pyproject.toml

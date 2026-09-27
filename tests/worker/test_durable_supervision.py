@@ -88,7 +88,7 @@ class Event:
         pass
 
 
-@pytest.mark.parametrize("failed_child,exitcode", [(0, 0), (0, 7), (1, 0), (1, 9)])
+@pytest.mark.parametrize("failed_child,exitcode", [(0, 0), (0, 7), (1, 0), (1, 9), (2, 0), (2, 11)])
 def test_supervisor_fails_and_stops_sibling_for_either_child_exit(monkeypatch, failed_child, exitcode):
     processes, handlers, ready = [], {}, Event()
 
@@ -99,7 +99,7 @@ def test_supervisor_fails_and_stops_sibling_for_either_child_exit(monkeypatch, f
             processes.append(self)
 
         def start(self):
-            if len(processes) == 2:
+            if len(processes) == 3:
                 processes[failed_child].exitcode = exitcode
 
         def is_alive(self):
@@ -117,7 +117,7 @@ def test_supervisor_fails_and_stops_sibling_for_either_child_exit(monkeypatch, f
     monkeypatch.setattr(relay.multiprocessing, "get_context", lambda mode: context)
     monkeypatch.setattr(relay.signal, "signal", lambda signum, callback: handlers.setdefault(signum, callback))
     assert relay.supervise(["worker"]) == 1
-    assert processes[1 - failed_child].terminated
+    assert all(process.terminated for index, process in enumerate(processes) if index != failed_child)
     assert not ready.is_set()
 
 
@@ -164,6 +164,55 @@ def test_readiness_requires_current_supervisor_relay_signal(monkeypatch):
     assert app.dependency_readiness(None) == {"status": "ready"}
     ready.clear()
     assert app.dependency_readiness(None) == {"status": "unavailable"}
+
+def test_supervisor_requires_relay_and_validator_health_together(monkeypatch):
+    snapshots, children = [], []
+    ready = Event()
+
+    class Channel:
+        def __init__(self):
+            self.events = []
+        def poll(self):
+            return bool(self.events)
+        def recv(self):
+            return self.events.pop(0)
+        def close(self):
+            pass
+
+    relay_channel, validator_channel = Channel(), Channel()
+    relay_channel.events.append((0.0, True))
+    channels = iter([(relay_channel, relay_channel), (validator_channel, validator_channel)])
+
+    class Stopped:
+        def is_set(self):
+            return len(snapshots) >= 2
+        def wait(self, _):
+            snapshots.append(ready.is_set())
+            if len(snapshots) == 1:
+                validator_channel.events.append((0.0, True))
+
+    class Process:
+        def __init__(self, **_):
+            self.exitcode = None
+            children.append(self)
+        def start(self):
+            pass
+        def is_alive(self):
+            return self.exitcode is None
+        def terminate(self):
+            self.exitcode = -15
+        def join(self, **_):
+            pass
+
+    context = SimpleNamespace(Event=lambda: ready, Pipe=lambda **_: next(channels), Process=Process)
+    monkeypatch.setattr(relay.multiprocessing, "get_context", lambda mode: context)
+    monkeypatch.setattr(relay.threading, "Event", Stopped)
+    monkeypatch.setattr(relay.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(relay.time, "monotonic", lambda: 0.0)
+    assert relay.supervise(["worker"]) == 0
+    assert snapshots == [False, True]
+    assert all(child.exitcode == -15 for child in children)
+
 
 
 def test_worker_cli_propagates_supervisor_failure(monkeypatch):

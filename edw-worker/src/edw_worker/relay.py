@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 
 from edw_api.task_contract import TASK_NAME, parse_envelope, payload_hash
 from .task_store import call
+from .template_validation import main as validate_templates
 
 logger = logging.getLogger(__name__)
 RELAY_PROGRESS_TIMEOUT = 15.0
@@ -183,7 +184,7 @@ def _stop_children(children):
 
 
 def supervise(arguments):
-    """Run one consumer and one independent relay; either child's loss fails the pair.
+    """Supervise consumer, relay and isolated template queue; any child's loss fails readiness.
 
     A fresh private IPC event carries readiness. No previous process/file can report
     a replacement relay ready. A stuck DB/broker operation also loses readiness and
@@ -193,6 +194,7 @@ def supervise(arguments):
     ready = context.Event()
     stopped = threading.Event()
     reader, writer = context.Pipe(duplex=False)
+    validation_reader, validation_writer = context.Pipe(duplex=False)
     children = []
     previous_handlers = {}
 
@@ -207,10 +209,16 @@ def supervise(arguments):
         publisher.start()
         children.append(publisher)
         writer.close()
+        validator = context.Process(target=validate_templates, args=(validation_writer,),
+                                    name="eid-template-validation")
+        validator.start()
+        children.append(validator)
+        validation_writer.close()
         consumer = context.Process(target=_run_worker, args=(arguments, ready), name="eid-consumer")
         consumer.start()
         children.append(consumer)
-        last_progress = time.monotonic()
+        last_progress = last_validation = time.monotonic()
+        relay_healthy = validation_healthy = False
         while not stopped.is_set():
             if any(child.exitcode is not None for child in children):
                 return 1
@@ -218,12 +226,17 @@ def supervise(arguments):
             for _ in range(64):
                 if not reader.poll():
                     break
-                last_progress, healthy = reader.recv()
-                if healthy:
-                    ready.set()
-                else:
-                    ready.clear()
-            if time.monotonic() - last_progress > RELAY_PROGRESS_TIMEOUT:
+                last_progress, relay_healthy = reader.recv()
+            for _ in range(16):
+                if not validation_reader.poll():
+                    break
+                last_validation, validation_healthy = validation_reader.recv()
+            if relay_healthy and validation_healthy:
+                ready.set()
+            else:
+                ready.clear()
+            if (time.monotonic() - last_progress > RELAY_PROGRESS_TIMEOUT
+                    or time.monotonic() - last_validation > 35):
                 return 1
             stopped.wait(0.1)
         return 0
@@ -235,6 +248,8 @@ def supervise(arguments):
         _stop_children(children)
         reader.close()
         writer.close()
+        validation_reader.close()
+        validation_writer.close()
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 

@@ -12,21 +12,37 @@ from .domain import DISCOVERY_TYPES, canonical_request_hash, content_hash, initi
 from .schemas import catalog_items
 
 
-TEMPLATE_BASE_SQL = """
- SELECT v.*,t.owner_id,s.status,w.active AS workspace_active
- FROM template_version v JOIN template t ON t.id=v.template_id
- JOIN template_version_state s ON s.version_id=v.id
- JOIN template_workspace w ON w.version_id=v.id AND w.workspace_id=%s
- WHERE v.id=%s
-"""
+GOVERNED_PROJECTION = (
+    ",to_jsonb(gr) AS governed_resource,p.rule_refs AS governed_manifest,p.manifest_sha256 ")
+GOVERNED_JOINS = (
+    " LEFT JOIN template_version_policy p ON p.version_id=v.id "
+    " LEFT JOIN template_governed_family g ON g.template_id=v.template_id "
+    "AND g.workspace_id=w.workspace_id "
+    " LEFT JOIN access_resource gr ON gr.id=g.resource_id AND gr.workspace_id=w.workspace_id ")
+TEMPLATE_BASE_SQL = (
+    "SELECT v.*,t.owner_id,s.status,w.active AS workspace_active" + GOVERNED_PROJECTION +
+    "FROM template_version v JOIN template t ON t.id=v.template_id "
+    "JOIN template_version_state s ON s.version_id=v.id "
+    "JOIN template_workspace w ON w.version_id=v.id AND w.workspace_id=%s" + GOVERNED_JOINS +
+    "WHERE v.id=%s")
 
 
 def _visible(facts, row):
     if (row is None or row["workspace_active"] is not True
             or row["development_only"] is not True
-            or row["fixture_owner"] != "story-2.1"
             or row["classification"] > facts["clearance"]):
         return False
+    if row["fixture_owner"] != "story-2.1":
+        resource = row.get("governed_resource")
+        manifest = row.get("governed_manifest")
+        if (row["fixture_owner"] is not None or not isinstance(resource, dict)
+                or resource.get("kind") != "template" or not isinstance(manifest, dict)
+                or content_hash(manifest) != row.get("manifest_sha256")):
+            return False
+        try:
+            authorize(facts, "resource:read", resource)
+        except AccessDenied:
+            return False
     scope = row["scope"]
     if scope == "personal":
         return str(row["owner_id"]) == str(facts["actor_id"])
@@ -57,10 +73,10 @@ def type_catalog(conn, subject, workspace_id):
 def list_templates(conn, subject, workspace_id, filters):
     facts, _, _ = checked(conn, subject, workspace_id)
     rows = conn.execute(
-        "SELECT v.*,t.owner_id,s.status,w.active AS workspace_active "
+        "SELECT v.*,t.owner_id,s.status,w.active AS workspace_active" + GOVERNED_PROJECTION +
         "FROM template_workspace w JOIN template_version v ON v.id=w.version_id "
         "JOIN template t ON t.id=v.template_id "
-        "JOIN template_version_state s ON s.version_id=v.id "
+        "JOIN template_version_state s ON s.version_id=v.id" + GOVERNED_JOINS +
         "WHERE w.workspace_id=%s AND w.active AND s.status='active' "
         "ORDER BY v.name,v.id", (workspace_id,),
     ).fetchall()
@@ -178,10 +194,10 @@ def _template_for_creation(conn, facts, workspace_id, command):
     # version while the root, workspace and version-state rows remain locked.
     _lock_template_family(conn, workspace_id, command.template_id)
     rows = conn.execute(
-        "SELECT v.*,t.owner_id,s.status,w.active AS workspace_active "
+        "SELECT v.*,t.owner_id,s.status,w.active AS workspace_active" + GOVERNED_PROJECTION +
         "FROM template t JOIN template_version v ON v.template_id=t.id "
         "JOIN template_version_state s ON s.version_id=v.id "
-        "JOIN template_workspace w ON w.version_id=v.id AND w.workspace_id=%s "
+        "JOIN template_workspace w ON w.version_id=v.id AND w.workspace_id=%s" + GOVERNED_JOINS +
         "WHERE t.id=%s ORDER BY v.created_at DESC,v.id DESC",
         (workspace_id, command.template_id),
     ).fetchall()
