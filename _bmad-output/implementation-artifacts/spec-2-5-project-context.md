@@ -2,7 +2,7 @@
 title: 'Story 2.5 组装并确认项目上下文'
 type: 'feature'
 created: '2026-09-26'
-status: 'in-progress'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'e3dceac68bb7dedcb479d00f1107b1411a1548ac'
 review_loop_iteration: 0
@@ -45,10 +45,10 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `migrations/versions/0014_project_context.py`、`contracts/`：上下文快照/head/确认/审计契约。
-- [ ] `edw-api/src/edw_api/documents/`：授权、CAS、来源及冲突校验、确认/ready 原因、失败关闭。
-- [ ] `edw-web/src/features/templates/`：事实/术语/约束/缺项编辑与显式确认；失权/未知结果安全恢复。
-- [ ] `tests/security/` 与前端测试源码：覆盖正反例；仅静态/编译检查及指定 opencode 模型审查。
+- [x] `migrations/versions/0014_project_context.py`、`contracts/`：上下文快照/head/确认/审计契约。
+- [x] `edw-api/src/edw_api/documents/`：授权、CAS、来源及冲突校验、确认/ready 原因、失败关闭。
+- [x] `edw-web/src/features/templates/`：事实/术语/约束/缺项编辑与显式确认；失权/未知结果安全恢复。
+- [x] `tests/security/` 与前端测试源码：覆盖正反例；仅静态/编译检查及指定 opencode 模型审查。
 
 **Acceptance Criteria:**
 - Given 当前授权草稿和合格事实，when 保存并确认精确版本，then 返回不可变版本、确认人/时间及持久化 ready 判断。
@@ -65,6 +65,9 @@ context:
 
 ## Review Triage Log
 
+- 2026-09-27 独立审查发现两项缺陷：无 ID 的外部来源定位可能进入 READY，合法大快照可能触发数据库约束并被映射为 503。大小问题经一轮修改与静态复核解决；来源问题经三轮修改，最后一轮 Ruff 退出 0，最终专项审查与全 Story 独立静态审查均 `approved`。不存在三轮验证仍失败的事实，不触发 `FORCED_PASSED`。
+- `manual:` 定位仅作惰性手工文本；外部对象通过当前可读的 `resource_id` 引用。前端提示与共享契约说明已同步。PostgreSQL 实际锁/JSONB 序列化、浏览器交互仍为 `not-run`，不得视为运行验收通过。
+
 ## Verification
 
 **Commands:** Ruff/compileall、ESLint/TypeScript/Vite、JSON 语法、`git diff --check`、独立源码审查；测试套件及运行验收一律 `not-run`。
@@ -73,3 +76,4 @@ context:
 - 已核实 opencode 模型目录：`opencode-go/muse-spark-1.3-contributor` 的显示名称为 **Muse Spark 1.3 Contributor**；已调用该模型完成源码审查，发现 JSON 语法、权限/输入恢复等问题并修复。仅源码审查，未运行测试或现场。
 - 单元/契约/安全测试及真实 DB、迁移、浏览器、环境验收：`not-run`。PostgreSQL 实际锁/授予语义与 UI 交互仍需后续允许的软件验证边界下核查；不得据此声称运行通过。
 - **2026-09-27 规则更新：** 测试套件仍为 `not-run`；其未执行不再阻止本 Story 的软件开发关闭。可根据源码实现、静态/编译证据与独立审查继续 step-04/05。本 Story 尚无同一断言或 Bug 经 3 次修改验证仍失败的记录，因此不触发 `FORCED_PASSED`；状态须由后续真实审查结果决定。
+- **2026-09-27 最终软件关闭：** 源码/差异与独立审查 `approved`，Ruff、compileall、前端 TypeScript/Vite 构建、JSON 解析及 diff 检查均有退出 0 记录；指定 Muse Spark 1.3 Contributor 最终只读审查未发现高/中风险。以上均非运行验收。测试套件、迁移、数据库、服务与浏览器验证仍 `not-run`。

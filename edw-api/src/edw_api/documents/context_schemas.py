@@ -21,6 +21,9 @@ def text(value):
 # This positive grammar excludes URI schemes, hosts with ports and paths while
 # permitting ordinary document names such as requirements.pdf.
 _MANUAL_LOCATION = re.compile(r"[\w .,'’\"()\[\]#\-，。、；（）【】《》]+")
+# Without a resource ID, a locator is a note, not a dotted host or file name.
+# The only ASCII period in this grammar is a standalone page marker (p.3).
+_MANUAL_NOTE = re.compile(r"(?:[\w ,'’\"()\[\]#\-，、；（）【】《》]|(?<!\w)[pP]\.\d+(?!\w))+")
 
 
 class Source(Strict):
@@ -37,6 +40,12 @@ class Source(Strict):
         if not _MANUAL_LOCATION.fullmatch(location):
             raise ValueError("来源定位只能填写手工文本；外部引用只使用资源 ID")
         return f"manual:{location}"
+
+    @model_validator(mode="after")
+    def require_resource_for_dotted_location(self):
+        if self.resource_id is None and not _MANUAL_NOTE.fullmatch(self.locator[len("manual:"):]):
+            raise ValueError("外部引用必须提供资源 ID；手工来源只填写说明或页码")
+        return self
 
 
 class Fact(Strict):
