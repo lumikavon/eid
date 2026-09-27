@@ -1,0 +1,14 @@
+{
+  "existing_files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "1fa4c5bfadadcd91a5600348cfba1da3b060244e8ada4838d338f39d35be8dc9"
+    }
+  ],
+  "project_config_existed": false,
+  "global_config_hashes": {
+    "C:\\Users\\virtualink\\AppData\\Roaming\\orca\\codex-runtime-home\\home\\config.toml": "c36d495aee3d461df47d57f0a1b625efa4ceb7f1341eb4ce7dd5bb0f3f2fe48b",
+    "C:\\Users\\virtualink\\.codex\\config.toml": "68ac6c10bea12352ddd49cd7c3991e6572ea131e8d88bd34b5cf91ea53e8cd1f"
+  },
+  "git_status_before": " M _bmad-output/implementation-artifacts/spec-1-1-runnable-workspace.md\n M _bmad-output/implementation-artifacts/spec-1-2-current-access.md\n?? .agents/\n?? .claude/\n?? .codex/\n?? AGENTS.md\n?? PROMPT.md\n?? _bmad-output/planning-artifacts/\n?? _bmad/\n"
+}

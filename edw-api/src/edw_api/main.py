@@ -29,6 +29,7 @@ from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
 from .documents.routes import create_canonical_router, create_router as create_document_router
 from .documents.editor_routes import create_router as create_editor_router
+from .documents.context_routes import create_router as create_context_router
 from .documents.governance_routes import create_router as create_governance_router
 from .tasks.routes import create_router as create_task_router
 from .keycloak_contract import (
@@ -47,6 +48,7 @@ app.include_router(create_router(settings, lambda token: verifier.verify(token))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_document_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_editor_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_context_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_canonical_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
@@ -227,6 +229,9 @@ def _postgres_status() -> str:
                            ('document_creation_receipt','SELECT'),
                            ('document_creation_receipt','INSERT'),
                            ('document_media','SELECT'), ('document_media','INSERT'),
+                           ('project_context_version','SELECT'), ('project_context_version','INSERT'),
+                           ('project_context_head','SELECT'), ('project_context_head','INSERT'),
+                           ('project_context_confirmation','SELECT'), ('project_context_confirmation','INSERT'),
                            ('template_governed_family','SELECT'), ('template_governed_family','INSERT'),
                            ('template_version_policy','SELECT'), ('template_version_policy','INSERT'),
                            ('template_candidate','SELECT'), ('template_candidate','INSERT'),
@@ -278,6 +283,12 @@ def _postgres_status() -> str:
                 AND NOT has_table_privilege(current_user,'document_knowledge_scope_grant','UPDATE')
                 AND NOT has_table_privilege(current_user,'access_resource','INSERT')
                 AND NOT has_table_privilege(current_user,'discovery_record','INSERT')
+                AND NOT has_table_privilege(current_user,'project_context_version','UPDATE')
+                AND NOT has_table_privilege(current_user,'project_context_confirmation','UPDATE')
+                AND NOT has_table_privilege(current_user,'project_context_head','DELETE')
+                AND NOT has_table_privilege('eid_worker','project_context_version','SELECT')
+                AND has_column_privilege(current_user,'project_context_head','version_id','UPDATE')
+                AND has_column_privilege(current_user,'project_context_head','revision','UPDATE')
                 AND NOT has_table_privilege(current_user,'document','UPDATE')
                 AND NOT has_table_privilege(current_user,'access_resource','UPDATE')
                 AND has_column_privilege(current_user,'document','head_version_id','UPDATE')

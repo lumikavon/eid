@@ -11,13 +11,20 @@ context:
   - '_bmad-output/planning-artifacts/epic-1-secure-workspace.md'
 ---
 
+## 当前开发与验证边界（2026-09-21）
+
+执行软件层面的开发、代码检查和编译验证；不启动实际运行环境进行功能实测，也不使用已启动的实际环境进行功能实测；不进行实物、硬件或现场运行验证。
+
+本文件的执行安排统一受[开发与验证规则](../planning-artifacts/development-validation-policy.md)约束。下文涉及启动、部署、迁移、fixture、功能测试、浏览器实测、联调、性能和故障演练的条款保留为待执行验收要求，当前暂停执行并记录 `not-run`；其中静态检查与编译可按规则单独执行。历史证据按原日期保留，不代表本轮通过或继续运行的授权。
+
+
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
 
 ## Intent
 
 **Problem：** 现有账户查询只检查活动成员关系并选择首个项目；角色、属性范围、密级、有效期和撤权不能共同约束下一次使用。
 
-**Approach：** 以 PostgreSQL 当前策略生成服务端授权上下文；实现真实项目选择和成员管理，API/Worker 复用同一授权决策，权限变更、epoch、失效记录与审计原子提交。
+**Approach：** 以 PostgreSQL 当前策略生成服务端授权上下文；实现真实项目选择和成员管理，API/Worker 复用同一授权决策，权限变更与审计原子提交。当前实现保留持久 epoch；AC 判定的是“下一次使用重新按当前策略决定”的结果，而不是要求额外缓存或失效机制。
 
 ## Boundaries & Constraints
 
@@ -60,14 +67,19 @@ context:
 - [x] `README.md`、验证/截图与 Story 记录：保留真实证据、失败记录和 R/P 边界，独立审查通过。
 
 **Acceptance Criteria：**
-- Given 作者、专家、质量、模板管理员、知识管理员、审批人、系统管理员及不同属性 fixtures，When 调用允许/拒绝操作与深链，Then 当前 RBAC AND ABAC AND clearance 决定，客户端 actor/scope 不扩大权限。
-- Given UI 加载或后台上下文创建后成员撤权，When 下一次 API、后台阶段或输出授权入口使用，Then 当前 epoch/策略拒绝旧权限且受控 UI 数据清空；后续任务/流复用此入口。
-- Given Worker 数据库身份，When 直接更改 ACL/head/approval/publication，Then PG 拒绝；关键权限变更与审计同成同败。
-- Given 原型壳层与新补充页面，When 切换/深链/失败/撤权，Then 保留视觉基线并呈现真实持久状态，经独立截图审查。
+- Given 有限角色、操作和资源属性决策矩阵，when 调用受保护 API，then 服务端以 RBAC、ABAC 和密级的当前合取结果决定允许或拒绝，客户端 actor/scope 不扩大权限。**验证：**以该矩阵为唯一数据源的表驱动 API 契约测试。
+- Given 成员在已加载 UI 或已创建受限后台上下文后被撤权，when 下一次受保护使用发生，then 访问被拒且 Web 清除受控数据。**验证：**`revoke-between-uses` 参数化集成测试。
+- Given Worker 数据库身份，when 直接写 ACL、head、approval 或 publication，then PostgreSQL 拒绝写入。**验证：**真实 PostgreSQL negative-grant 测试。
+- Given 管理权限变更，when 策略变更或审计写入任一失败，then 两者均不提交。**验证：**注入审计失败的事务集成测试。
+- Given 新增项目或成员页面的具名 loading、forbidden、error、success 状态，when 切换项目或打开受保护深链，then 只呈现当前持久状态。**验证：**浏览器状态回归测试。
 
 ## Design Notes
 
-不缓存授权 allow；每次从数据库读取持久 epoch 和当前事实，避免 TTL 冒充实时撤权。角色仅映射操作能力，管理员也必须满足项目范围和密级。资源策略关系由数据库解析；请求中的 ID 只用于定位。最小资源策略元数据是本 Story 属性鉴权对象，不认证未来编辑/审批/发布业务。后台 delegation 以数据库受限记录绑定原 actor、resource、operation、purpose 与到期时间，Worker 身份不得自行创建或扩权。
+不把无法证明新鲜性的 allow 结果当作授权。角色仅映射操作能力，管理员也必须满足项目范围和密级。资源策略关系由数据库解析；请求中的 ID 只用于定位。最小资源策略元数据是本 Story 属性鉴权对象，不认证未来编辑/审批/发布业务。后台 delegation 仅绑定本 Story 已有的 actor、resource、operation、purpose 与到期时间；Worker 身份不得自行创建或扩权。
+
+## Spec Change Log
+
+2026-09-14：按精益 AC 审计移除了对特定 epoch、未来任务/流复用和全量视觉复审的验收预设；保留当前授权、撤权、数据库负授权和审计原子性的可测试结果。
 
 ## Implementation Notes
 

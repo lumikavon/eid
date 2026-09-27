@@ -1,5 +1,9 @@
-# 2026-09-23 Story 1.4: user removed PG/RabbitMQ fault, duplicate and ACK runtime gates.
-# Story done is software-only; runtime behavior remains not-run.
+# 当前执行约束（2026-09-21）：仅软件开发、代码检查和编译验证。
+# 不启动或使用已启动的实际运行环境进行功能实测；不进行实物、硬件或现场验证。
+# 运行验收暂停并记 not-run，不以静态/编译通过替代；不据本次规划修改变更 Story 状态。
+# 详细规则：_bmad-output/planning-artifacts/development-validation-policy.md
+# 2026-09-23 Story 1.4 例外：用户剔除 PG/RabbitMQ 故障、重复投递和 ACK 运行门禁；
+# 该 Story 的 done 仅指软件实现/静态/编译/独立审查完成，运行结果仍 not-run。
 # Sprint Status - S4b author draft only
 # Generated from the explicit immutable IDs in the source index and 13 epic shards.
 # Source planning root: D:/Desktop/eid/_bmad-output/planning-artifacts
@@ -33,8 +37,10 @@
 # Missing real model/enterprise/official-asset/UAT/production-equivalent evidence is
 # blocked/not-run in its evidence ledger, never done; backlog remains the initial
 # supported tracking state here. Local doubles do not prove real efficacy/integration.
-# Failed or blocked stories cannot be skipped or marked done. No later local epic
-# follows Epic 13. No full-delivery completion or execution authorization is implied.
+# 2026-09-27: after three failed modification/verification rounds for one issue,
+# FORCED_PASSED is a forced workflow completion with failures retained; it is
+# eligible for serial continuation after an ownership-safe commit, not a pass.
+# No later local epic follows Epic 13. No full-delivery completion is implied.
 # The source epics.md completion contract and per-story transfer tables are normative.
 #
 # STATUS DEFINITIONS:
@@ -50,6 +56,8 @@
 #   - in-progress: Developer actively working on implementation
 #   - review: Implementation complete, ready for review
 #   - done: Story completed
+#   - FORCED_PASSED: Forced workflow completion after three failed rounds;
+#     unresolved failures remain in the Story record
 #
 # Retrospective Status:
 #   - optional: Can be completed but not required
@@ -71,7 +79,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-24-2026 20:21"
+last_updated: "09-26-2026 22:39"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -83,7 +91,7 @@ development_status:
   1-1-runnable-workspace: done
   1-2-current-access: done
   1-3-workspace-discovery: done # schema head 回执兼容返修经独立静态审查；运行验收 not-run
-  1-4-durable-submission: done # software gate and source review; PG/RabbitMQ/ACK runtime not-run
+  1-4-durable-submission: done # 软件门禁/独立源码审查完成；实际 PG/RabbitMQ/ACK 仍 not-run
   1-5-fenced-recovery: done # 用户限定软件门禁关闭；测试/迁移/DB/Broker/ACK 运行验收 not-run
   1-6-task-observation: done # 集成复盘返修已通过独立静态审查；测试、迁移及真实运行验收 not-run
   epic-1-retrospective: done
@@ -93,8 +101,8 @@ development_status:
   2-1-template-creation: done # 软件门禁/独立源码审查完成；测试、数据库与真实运行验收 not-run
   2-2-domain-editor: done # 软件实现/静态编译/独立源码审查完成；测试、迁移、DB/S3/服务/浏览器及现场验收 not-run
   2-3-version-conflicts: done # 软件实现/静态编译/独立源码审查完成；测试、DB/服务/浏览器及真实运行验收 not-run
-  2-4-template-governance: backlog
-  2-5-project-context: backlog
+  2-4-template-governance: done # 软件实现/静态编译/独立源码审查完成；测试、迁移、DB/Worker/浏览器及沙箱运行验收 not-run
+  2-5-project-context: done
   2-6-outline-confirmation: backlog
   epic-2-retrospective: optional
 

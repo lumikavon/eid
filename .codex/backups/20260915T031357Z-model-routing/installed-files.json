@@ -1,0 +1,50 @@
+[
+  {
+    "path": "AGENTS.md",
+    "sha256": "416de03a13d6863e9d54d284f55c642e0b3f4d04b939bd4b02bd814a00d201e8"
+  },
+  {
+    "path": ".codex/config.toml",
+    "sha256": "e0c7c341bdc59247d62deae9d926d34d2b3a269af713bfe70d6b950114ae7f64"
+  },
+  {
+    "path": ".codex/MODEL_ROUTING.md",
+    "sha256": "d070717640c7030cd040d0f30d4946d3d1a13f87088525c2c24c99828c625253"
+  },
+  {
+    "path": ".codex/verify-routing.py",
+    "sha256": "b329d395642777162b1d5416bc9549d519e85b8940d80aff498c74f9811f4337"
+  },
+  {
+    "path": ".codex/routing-evidence.json",
+    "sha256": "d29f85f9fb5473ad265c3076b25c50549c3c0d7729a3a88b714a02f1b78ddec5"
+  },
+  {
+    "path": ".codex/agents/default.toml",
+    "sha256": "ff5b6fc4bab15f9d39ce2a2e6661ab45885d86d9f88a5558d0ff51e5ecf32072"
+  },
+  {
+    "path": ".codex/agents/eid_architect.toml",
+    "sha256": "3881bd8ebe28d6a4d04f72857e0ec7fc5bbb51c12214faf2ef056a71d6d6088f"
+  },
+  {
+    "path": ".codex/agents/eid_coder.toml",
+    "sha256": "de54b83377b603c6fd6cbbeedac37e634745ea7d1e1cfbbc0a6b64855b2fcb3a"
+  },
+  {
+    "path": ".codex/agents/eid_debugger.toml",
+    "sha256": "907fd55885ded6cbd5089e87da61de987943fb03cad31452f65b91087c40224d"
+  },
+  {
+    "path": ".codex/agents/eid_high_risk.toml",
+    "sha256": "c34a81e6ffb06a53467a6b357a8d8a69015c8b568b34b6967da3791998724318"
+  },
+  {
+    "path": ".codex/agents/eid_reviewer.toml",
+    "sha256": "4d0d19e19867af5727f821373341f344f6687c8fc93e3fe1ac71746f81c5e6ef"
+  },
+  {
+    "path": ".codex/agents/eid_tester.toml",
+    "sha256": "106c9a0b8dc5c709fcce5b5cc3c8852797105acfe489d7e75d5f28ad4e0849d4"
+  }
+]

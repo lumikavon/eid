@@ -115,7 +115,7 @@ def _database_probe(operation_timeout: float) -> None:
             raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0013_template_governance")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0014_project_context")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:

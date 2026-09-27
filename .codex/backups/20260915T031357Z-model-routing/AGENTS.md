@@ -1,0 +1,7 @@
+- bmad-develop-epic resolved filesystem path: C:\Users\virtualink\.claude\skills\bmad-develop-epic
+- bmad-develop-auto quality gate: 中：核心质量检查、关键测试、代码审查与验证；每个 Story 保留检查 → 优化 → 验证闭环，不绕过失败或阻塞门禁。
+- bmad-develop-auto S4c confirmation: 用户明确确认当前 Epics 规划（13 Epic、73 Story；67 项本地实施 + 6 项真实环境验收），并明确要求“不要进入开发”。当前停在规划确认后；不得自动启动 S7、实现代码或修改开发状态。S5/S6 尚未执行，不得宣称通过；后续推进须遵守用户新指令。
+- bmad-develop-auto confirmed scope: 全三期；单仓库；edw-web、edw-api、edw-worker 三个工程；Knowledge/LLM Gateway 为共享模块；Worker 保留分类队列及必要运行隔离；部署、迁移、共享契约、测试和评测作为仓库交付目录。
+- bmad-develop-auto prototype decision: 允许沿用现有原型风格补齐缺失页面、必要控件与真实任务状态；已有页面保持视觉基准，示例数据随真实业务更新，演示按钮实现真实业务；补充项须在 UX 产物中逐项列明。
+- bmad-develop-auto integration boundary: 企业知识库、身份、MES/项目系统先实现本地适配及契约测试，真实系统联调待接口接入；模型先实现适配器和确定性测试替身，真实生成、检索效果及容量验收待环境就绪。模拟测试不得作为真实集成或AI效果通过证据，未满足时不得宣称全量交付完成。
+- bmad-develop-auto database authorization: 用户明确授权仅对本项目新建的、与现有业务数据隔离的本地开发/测试数据库执行迁移和测试数据读写；不涉及现有企业数据库或生产环境。执行前核对目标地址、数据库名称及项目专用性，无法证实隔离时暂停；本授权不包含删除数据库、清理既有数据或访问生产。

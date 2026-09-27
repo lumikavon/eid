@@ -1,6 +1,12 @@
-# EID 本地三工程工作区
+# EID 三工程开发工作区
 
-本仓库提供本地隔离三工程工作区：`edw-web`、`edw-api`、`edw-worker`，以及真实的 PostgreSQL、Keycloak、RabbitMQ、Redis、SeaweedFS S3 和 NGINX。统一入口为 <http://localhost:18080>。各 Story 的完成状态与独立验收证据见 `_bmad-output/implementation-artifacts/`。
+本仓库包含 `edw-web`、`edw-api`、`edw-worker` 三个工程，依赖 PostgreSQL、Keycloak、RabbitMQ、Redis、SeaweedFS S3 和 NGINX。统一入口为 <http://localhost:18080>。各 Story 的完成状态与独立验收证据见 `_bmad-output/implementation-artifacts/`。
+
+## 当前开发环境
+
+当前服务运行于 `seadee-develop:/opt/eid`，以 [seadee-develop.yaml](deployment/environments/seadee-develop.yaml) 为唯一开发环境选择器。浏览器入口仍为 `http://localhost:18080`，通过已授权的 SSH 隧道连接；本机 PostgreSQL 转发端口为 **15432**，远端仍为 loopback 55432。操作步骤、归属守卫与恢复边界见 [远端开发说明](docs/remote-development.md)。
+
+以下本机 bootstrap、55432 地址和 `.local/runtime-images.json` 说明保留为 Story 1.1 历史实现参考，**当前环境不执行本机 bootstrap、不启动本机开发容器、不使用旧本机运行清单**。当前有效运行清单位于 `.local/remote/seadee-develop/runtime-images.json`，绑定远端九服务、schema 3 来源和候选指纹；新候选必须重新完成其验证，不能修改旧清单冒充已部署。
 
 ## 工作区发现（Story 1.3，软件交付）
 

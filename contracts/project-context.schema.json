@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/project-context.schema.json",
+  "title": "Story 2.5 manual project context snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intent", "facts", "glossary", "constraints", "missing", "zero_facts"],
+  "properties": {
+    "intent": {"type": "string", "maxLength": 2048},
+    "facts": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["key", "value", "unit", "source", "owner_id", "confirmed"], "properties": {"key": {"$ref": "#/$defs/key"}, "value": {"$ref": "#/$defs/value"}, "unit": {"type": ["string", "null"], "minLength": 1, "maxLength": 64}, "source": {"$ref": "#/$defs/source"}, "owner_id": {"$ref": "#/$defs/uuid"}, "confirmed": {"type": "boolean"}}}},
+    "glossary": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["term", "definition"], "properties": {"term": {"$ref": "#/$defs/key"}, "definition": {"$ref": "#/$defs/value"}}}},
+    "constraints": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["text", "source"], "properties": {"text": {"$ref": "#/$defs/value"}, "source": {"$ref": "#/$defs/source"}}}},
+    "missing": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["key", "required", "resolved"], "properties": {"key": {"$ref": "#/$defs/key"}, "required": {"type": "boolean"}, "resolved": {"type": "boolean"}}}},
+    "zero_facts": {"type": "boolean"}
+  },
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "key": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"},
+    "value": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "\\S"},
+    "source": {"type": "object", "additionalProperties": false, "required": ["locator", "resource_id"], "properties": {"locator": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^manual:[^:/\\\\]+$", "description": "Inert manual location text starting with manual:. The API restricts the remaining characters; a referenced workspace resource is identified only by resource_id and reauthorized on use."}, "resource_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]}}}
+  },
+  "description": "This schema validates snapshot shape and field lengths; API validation further restricts manual locator characters and rejects snapshots whose conservative serialized size exceeds 131072 bytes. PUT /api/v1/workspaces/{workspace_id}/documents/{document_id}/context saves an immutable version using base_context_version_id, context_revision, document_version_id and document_revision. POST /confirm pins version_id and document revision, and requires zero_facts_acknowledged for zero facts. GET /context and GET /context/eligibility reauthorize references and return CONTEXT_READY only for an exact confirmed draft/document head with all required missing items resolved. No model or external source integration is implied."
+}

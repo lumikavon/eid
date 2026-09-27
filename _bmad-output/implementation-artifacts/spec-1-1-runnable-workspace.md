@@ -11,13 +11,20 @@ context:
   - '_bmad-output/planning-artifacts/epic-1-secure-workspace.md'
 ---
 
+## 当前开发与验证边界（2026-09-21）
+
+执行软件层面的开发、代码检查和编译验证；不启动实际运行环境进行功能实测，也不使用已启动的实际环境进行功能实测；不进行实物、硬件或现场运行验证。
+
+本文件的执行安排统一受[开发与验证规则](../planning-artifacts/development-validation-policy.md)约束。下文涉及启动、部署、迁移、fixture、功能测试、浏览器实测、联调、性能和故障演练的条款保留为待执行验收要求，当前暂停执行并记录 `not-run`；其中静态检查与编译可按规则单独执行。历史证据按原日期保留，不代表本轮通过或继续运行的授权。
+
+
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
 
 ## Intent
 
 **Problem：** 当前仓库还没有可复现运行的 `edw-web`、`edw-api`、`edw-worker` 三工程工作区，项目成员无法通过真实本地身份进入应用，也无法区分进程存活与依赖已就绪。
 
-**Approach：** 建立最小且版本锁定的三工程骨架与本地 Compose 环境，经 NGINX 提供 SPA/API 入口，使用真实 Keycloak Authorization Code + PKCE S256 登录，并以 PostgreSQL 中的最小身份/工作区记录返回当前账户；启动、迁移和就绪检查均先验证环境及数据隔离并安全失败。
+**Approach：** 建立最小三工程骨架与本地 Compose 环境，经 NGINX 提供 SPA/API 入口，使用真实 Keycloak Authorization Code + PKCE S256 登录，并以 PostgreSQL 中的最小身份/工作区记录返回当前账户；启动、迁移和就绪检查先验证环境及数据隔离并安全失败。实现只锁定运行所需的已声明版本，不为本 Story 新增兼容性矩阵或抽象层。
 
 ## Boundaries & Constraints
 
@@ -66,16 +73,19 @@ context:
 - [x] `tests/contract/`, `tests/security/`, `tests/ops/`, `tests/ux/` -- 覆盖矩阵全部正反场景，保存日志、截图、锁与镜像清单；检查日志、URL 和浏览器存储无 token/秘密。
 
 **Acceptance Criteria：**
-- Given 已验证的新隔离本地数据库与固定 locks/images，when Compose 启动 W/A/K 和真实本地基础设施，then NGINX 服务 SPA，readiness 报告真实依赖健康，Code + PKCE 登录到数据库映射的当前账户而非硬编码人员；证据在迁移前标识 host/database/project 独占性。
-- Given issuer、audience、expiry/nbf、签名/JWKS 或 PKCE 无效，或数据库不可用，when 尝试登录/API 访问，then 访问被拒绝或 readiness 准确降级，不出现样例工作区或特权回退，URL、浏览器持久存储及日志中没有 token。
-- Given Node/依赖版本不支持或数据库隔离无法证明，when bootstrap validation 运行，then 以可操作原因停止，不执行既有数据清理、迁移或任何生产目标操作。
-- Given 固定视觉条件和真实身份/状态，when 比对实现壳与 P-00/P-12，then 布局、位置、尺寸、间距、字体、颜色、圆角、阴影、边框、图标、控件状态及 1180px 响应规则通过保真检查，且原型源文件保持不变。
+- Given 已验证的隔离本地环境，when 启动 W/A/K 并完成真实 PKCE 登录，then `GET /api/v1/me` 返回数据库映射的当前账户和工作区。**验证：**一次浏览器端到端测试，同时记录迁移前环境 guard 结果。
+- Given 无效的 OIDC/JWT 或 PKCE 输入，when 调用受保护 API，then 返回结构化未授权响应且不返回账户或工作区数据。**验证：**参数化 API 契约测试。
+- Given 任一必需本地依赖不可用，when 请求 readiness，then `/health/live` 与 `/health/ready` 按各自语义报告状态，受保护请求不伪造成功。**验证：**覆盖 PostgreSQL、Worker、NGINX、RabbitMQ、Redis 与 S3 的参数化依赖断开集成测试。
+- Given 已声明工具链或环境隔离校验失败，when 运行 bootstrap guard，then 非零退出且迁移入口未调用。**验证：**参数化 guard 故障测试。
+- Given 批准的 P-00/P-12 基线、viewport 和具名认证状态，when 进行视觉回归，then 改动的 shell 控件符合批准的基线或已登记的差异。**验证：**固定环境的截图差异审查；原型文件完整性单列为仓库检查。
 
 ## Implementation Notes
 
 2026-09-11：Story1.1本地隔离范围完成。第十九轮完整独立审查收敛，当前18PNG获独立批准，所有有效问题已修复。Python295、Web61、真实live11 (109.83s)、浏览器19 (1.7m)、Ruff/静态与完整bootstrap通过；审查后根代理关键156项及九服务实际运行绑定复核通过。原型未变，未推进后续Story或扩展真实企业/生产/AI验收。
 
 ## Spec Change Log
+
+2026-09-14：按精益 AC 审计重写验收：每条 AC 只保留一个可判定结果和一个验证手段；移除把启动拓扑、认证故障、数据隔离、视觉全量清单混在同一 AC 的写法。安全边界与真实环境义务仍保留在 Boundaries、L/R/P 和架构文档中。
 
 2026-09-10 用户明确批准视觉验证方法：精确布局/CSS 核验＋独立截图差异审查替代 PNG 完全一致断言。保留原型与差异证据，修复实际视觉偏离；不引入统一像素容差，不豁免安全/功能测试或独立代码审查。
 

@@ -1,0 +1,13 @@
+# Project routing, verified against local codex-cli 0.154.0.
+# Main model, provider, credentials, permissions, MCPs and global roles inherit.
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 10
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "low"
+
+[features.multi_agent_v2]
+# Expose agent_type so the orchestrator can select the project role files.
+hide_spawn_agent_metadata = false
+# Models are pinned in role files; ad-hoc model overrides remain hidden.
+expose_spawn_agent_model_overrides = false
