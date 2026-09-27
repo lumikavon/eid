@@ -103,7 +103,7 @@ development_status:
   2-3-version-conflicts: done # 软件实现/静态编译/独立源码审查完成；测试、DB/服务/浏览器及真实运行验收 not-run
   2-4-template-governance: done # 软件实现/静态编译/独立源码审查完成；测试、迁移、DB/Worker/浏览器及沙箱运行验收 not-run
   2-5-project-context: done
-  2-6-outline-confirmation: backlog
+  2-6-outline-confirmation: done # 软件实现、静态编译及独立源码审查完成；测试、迁移、数据库、服务、浏览器与现场验收 not-run
   epic-2-retrospective: optional
 
   # Epic 3: 5 L-delivery stories; source epic-3-trustworthy-evidence.md

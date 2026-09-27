@@ -99,6 +99,7 @@ def _database_probe(operation_timeout: float) -> None:
              AND NOT has_table_privilege(current_user,'template_validation','UPDATE')
              AND NOT has_table_privilege(current_user,'template_version','SELECT')
              AND NOT has_table_privilege(current_user,'document_version','SELECT')
+             AND NOT has_table_privilege(current_user,'document_outline_version','SELECT')
              AND NOT has_table_privilege(current_user,'document','INSERT')
              AND NOT has_function_privilege(current_user,
                  'eid_notification_mark_read_v1(uuid,uuid)','EXECUTE')
@@ -115,7 +116,7 @@ def _database_probe(operation_timeout: float) -> None:
             raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0014_project_context")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0015_outline_confirmation")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:

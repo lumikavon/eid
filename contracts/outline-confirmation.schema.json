@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/outline-confirmation.schema.json",
+  "title": "Story 2.6 manual outline snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sections"],
+  "properties": {
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "properties": {
+          "id": {"$ref": "#/$defs/uuid"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S"},
+          "template_section_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]}
+        }
+      }
+    }
+  },
+  "$defs": {"uuid": {"type": "string", "format": "uuid"}},
+  "description": "This schema checks snapshot shape and field lengths; the API additionally trims titles, rejects control characters and invalid template-section identity, and limits serialized size. PUT /api/v1/workspaces/{workspace_id}/documents/{document_id}/outline accepts base_outline_version_id, outline_revision, document_version_id, document_revision, context_version_id, template_version_id and this snapshot. Each section id is stable across manual reorder; manually added sections omit template_section_id or set null. Client input never supplies mandatory. The pinned template manifest supplies template_sections and required_sections with id/title/mandatory; a development fixture without policy makes every fixed structure section mandatory with a deterministic ID. Saving requires current edit authority, draft, exact document head/revision, exact pinned template_version_id and CONTEXT_READY version, validates required IDs and titles, and creates an immutable outline version. POST /confirm accepts version_id plus the exact document_version_id, document_revision, context_version_id and template_version_id and records the current human actor/time. GET /outline, /eligibility, /versions and /versions/{version_id} are no-store and reauthorize the document. OUTLINE_READY is recalculated from the current document, context, template and confirmation; changes invalidate old readiness. Runtime acceptance is not implied."
+}

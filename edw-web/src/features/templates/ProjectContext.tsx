@@ -12,7 +12,7 @@ const normalize=(data:ContextSnapshot):ContextSnapshot=>({
  constraints:data.constraints.map(c=>({...c,text:c.text.trim(),source:{locator:c.source.locator.trim(),resource_id:c.source.resource_id?.trim()||null}})),
  missing:data.missing.map(m=>({...m,key:m.key.trim()})),
 });
-export default function ProjectContext({current,document,documentDirty,onPending,onReject,onRefresh}:{current:WorkspaceAccess;document:DocumentData;documentDirty:boolean;onPending:(pending:boolean)=>void;onReject:(e:unknown)=>void;onRefresh:()=>void}){
+export default function ProjectContext({current,document,documentDirty,onPending,onContextObserved,onReject,onRefresh}:{current:WorkspaceAccess;document:DocumentData;documentDirty:boolean;onPending:(pending:boolean)=>void;onContextObserved:()=>void;onReject:(e:unknown)=>void;onRefresh:()=>void}){
  const [saved,setSaved]=useState<ContextData|null>(null);const [draft,setDraft]=useState<ContextSnapshot>(blankContext);const [dirty,setDirty]=useState(false);
  const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [blocked,setBlocked]=useState(false);const [adoptable,setAdoptable]=useState(false);const [unknown,setUnknown]=useState<{snapshot:ContextSnapshot;base:string|null;revision:number}|null>(null);
  const [zeroAck,setZeroAck]=useState(false);const [loading,setLoading]=useState(true);const [status,setStatus]=useState('');
@@ -36,7 +36,7 @@ export default function ProjectContext({current,document,documentDirty,onPending
  };
  const refresh=async()=>{
   if(busy)return;const requestScope=scope;const controller=new AbortController();inFlight.current?.abort();inFlight.current=controller;setLoading(true);setError('');
-  try{const result=await getContext(current,document.id,controller.signal);if(controller.signal.aborted||scopeRef.current!==requestScope)return;const changed=!!saved&&(saved.version_id!==result.version_id||saved.document_version_id!==result.document_version_id||saved.document_revision!==result.document_revision);setSaved(result);setBlocked(!!unknown||dirtyRef.current&&(changed||blocked));setAdoptable(!unknown&&dirtyRef.current&&(changed||blocked));if(!dirtyRef.current&&!unknown){setDraft(result.snapshot??blankContext());setZeroAck(false)}setStatus(result.state==='CONTEXT_READY'?'精确版本已确认':'上下文尚未满足全部前置条件')}
+  try{const result=await getContext(current,document.id,controller.signal);if(controller.signal.aborted||scopeRef.current!==requestScope)return;const changed=!!saved&&(saved.version_id!==result.version_id||saved.document_version_id!==result.document_version_id||saved.document_revision!==result.document_revision);setSaved(result);onContextObserved();setBlocked(!!unknown||dirtyRef.current&&(changed||blocked));setAdoptable(!unknown&&dirtyRef.current&&(changed||blocked));if(!dirtyRef.current&&!unknown){setDraft(result.snapshot??blankContext());setZeroAck(false)}setStatus(result.state==='CONTEXT_READY'?'精确版本已确认':'上下文尚未满足全部前置条件')}
   catch(problem){if(controller.signal.aborted||scopeRef.current!==requestScope)return;setSaved(null);setHistorical(null);setVersions([]);if(!dirtyRef.current)setDraft(blankContext());setBlocked(true);setError(problem instanceof Error?problem.message:'无法读取上下文');protectedError(problem)}
   finally{if(!controller.signal.aborted)setLoading(false)}
  };
@@ -49,13 +49,13 @@ export default function ProjectContext({current,document,documentDirty,onPending
   if(busy||blocked||unknown||!saved)return;const requestScope=scope;
   const body=normalize(draftRef.current);const controller=new AbortController();inFlight.current=controller;setBusy(true);setError('');
   try{const result=await saveContext(current,document.id,{base_context_version_id:saved.version_id,context_revision:saved.revision,document_version_id:document.version_id,document_revision:document.revision,snapshot:body},controller.signal);
-   if(controller.signal.aborted||scopeRef.current!==requestScope)return;setSaved(result);if(stable(normalize(draftRef.current))===stable(body)){setDraft(result.snapshot??body);setDirty(false);dirtyRef.current=false}else setStatus('保存期间有后续修改；输入仍未保存');setZeroAck(false);setStatus('上下文版本已保存；仍需明确确认')}
+   if(controller.signal.aborted||scopeRef.current!==requestScope)return;setSaved(result);onContextObserved();if(stable(normalize(draftRef.current))===stable(body)){setDraft(result.snapshot??body);setDirty(false);dirtyRef.current=false}else setStatus('保存期间有后续修改；输入仍未保存');setZeroAck(false);setStatus('上下文版本已保存；仍需明确确认')}
   catch(problem){if(controller.signal.aborted||scopeRef.current!==requestScope)return;setError(problem instanceof Error?problem.message:'保存失败');const denied=protectedError(problem);if(!denied&&problem instanceof TemplateError&&problem.failure==='conflict'){setBlocked(true);setAdoptable(false);setStatus('版本冲突；本地输入保留，请重新核对服务端基线后人工处理')}else if(!denied&&problem instanceof TemplateError&&['timeout','unavailable','cancelled','invalid-response'].includes(problem.failure)&&(!problem.status||problem.status===408||problem.status>=500)){setUnknown({snapshot:body,base:saved.version_id,revision:saved.revision});setStatus('保存结果未知，禁止盲目重试')}}
   finally{setBusy(false)}
  };
  const reconcile=async()=>{
   if(!unknown||busy)return;const requestScope=scope;setBusy(true);setError('');
-  try{const result=await getContext(current,document.id);if(scopeRef.current!==requestScope)return;setSaved(result);setBlocked(false);
+  try{const result=await getContext(current,document.id);if(scopeRef.current!==requestScope)return;setSaved(result);onContextObserved();setBlocked(false);
    if(result.revision===unknown.revision+1&&stable(result.snapshot)===stable(unknown.snapshot)){
     if(stable(normalize(draftRef.current))===stable(unknown.snapshot)){setDraft(result.snapshot!);setDirty(false);dirtyRef.current=false}setUnknown(null);setStatus('已核对原保存结果；如有后续编辑仍需另存')
    }else if(result.version_id===unknown.base&&result.revision===unknown.revision){setUnknown(null);setStatus('原提交未观察到；可明确重试保存')}else{setUnknown(null);setBlocked(true);setStatus('服务端已有另一版本；输入保留，请人工合并后重新读取版本基线')}
@@ -63,7 +63,7 @@ export default function ProjectContext({current,document,documentDirty,onPending
  };
  const confirm=async()=>{
   if(!saved?.version_id||busy||dirty||unknown||blocked)return;const requestScope=scope;
-  setBusy(true);setError('');try{const result=await confirmContext(current,document.id,{version_id:saved.version_id,document_version_id:document.version_id,document_revision:document.revision,zero_facts_acknowledged:saved.snapshot?.zero_facts===true&&zeroAck});if(scopeRef.current!==requestScope)return;setSaved(result);setStatus(result.state==='CONTEXT_READY'?'人工确认完成':'前置条件失效，请重新检查')}
+  setBusy(true);setError('');try{const result=await confirmContext(current,document.id,{version_id:saved.version_id,document_version_id:document.version_id,document_revision:document.revision,zero_facts_acknowledged:saved.snapshot?.zero_facts===true&&zeroAck});if(scopeRef.current!==requestScope)return;setSaved(result);onContextObserved();setStatus(result.state==='CONTEXT_READY'?'人工确认完成':'前置条件失效，请重新检查')}
   catch(problem){if(scopeRef.current!==requestScope)return;setError(problem instanceof Error?problem.message:'确认失败');if(!protectedError(problem)&&problem instanceof TemplateError&&['timeout','unavailable','cancelled','invalid-response'].includes(problem.failure)&&(!problem.status||problem.status===408||problem.status>=500)){setBlocked(true);setStatus('确认结果未知；请重新核对当前版本')}else if(problem instanceof TemplateError&&problem.failure==='conflict')setBlocked(true)}finally{setBusy(false)}
  };
  const conflict=()=>{if(!adoptable||!saved)return;setAdoptable(false);setBlocked(false);setStatus('输入仍保留；请核对并决定是否以当前服务端版本为 base 保存')};
