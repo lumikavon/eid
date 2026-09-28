@@ -1,0 +1,1 @@
+Optional trusted, offline PaddleOCR det/rec model assets may be placed under `det/` and `rec/` before building the Python image. Do not download weights at runtime. Without both complete models OCR fails closed with `OCR_UNAVAILABLE`; this directory contains no model weights by default.

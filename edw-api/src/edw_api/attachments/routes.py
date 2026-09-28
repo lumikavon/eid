@@ -111,9 +111,9 @@ def create_router(settings, verify):
             attachment_id = uuid4()
             key = f"attachment-quarantine/{workspace_id}/{attachment_id}"
             # Lock is held across this bounded private write to serialize quota and digest.
-            s3 = object_client(settings)
+            s3 = object_client(settings, quarantine=True)
             try:
-                s3.put_object(Bucket=settings.s3_bucket, Key=key, Body=bytes(raw),
+                s3.put_object(Bucket=settings.attachment_bucket, Key=key, Body=bytes(raw),
                               ContentType="application/octet-stream", Metadata={"sha256": digest})
             except (BotoCoreError, ClientError) as exc:
                 raise ApiError(503, "ATTACHMENT_STORAGE", "附件存储暂不可用", retryable=True) from exc
@@ -127,16 +127,16 @@ def create_router(settings, verify):
                                                "resource:read", f"attachment:{attachment_id}",
                                                request.state.request_id, request.state.trace_id)
                 conn.execute("""INSERT INTO attachment(id,workspace_id,document_id,uploader_id,object_key,
-                    sha256,kind,byte_length,classification) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (attachment_id, workspace_id, document_id, facts["actor_id"], key, digest,
-                     kind, len(raw), resource["classification"]))
+                    storage_bucket,sha256,kind,byte_length,classification) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (attachment_id, workspace_id, document_id, facts["actor_id"], key,
+                     settings.attachment_bucket, digest, kind, len(raw), resource["classification"]))
                 conn.execute("""INSERT INTO attachment_parse(attachment_id,parser_version,source_sha256,delegation_id)
                     VALUES (%s,'attachment-v1',%s,%s)""",
                     (attachment_id, digest, delegation["delegation_id"]))
             except Exception:
-                s3 = object_client(settings)
+                s3 = object_client(settings, quarantine=True)
                 try:
-                    s3.delete_object(Bucket=settings.s3_bucket, Key=key)
+                    s3.delete_object(Bucket=settings.attachment_bucket, Key=key)
                 except (BotoCoreError, ClientError):
                     pass  # Unreferenced quarantine is not reachable through any API.
                 finally:

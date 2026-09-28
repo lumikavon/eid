@@ -9,7 +9,8 @@ def test_stale_and_revoked_sources_are_never_served_from_snapshot_only():
     assert "def visible(settings, job):" in code
     assert 'verify_source(settings' in code
     assert 'local_source(conn' in code
-    assert "if not decorate(conn, fresh_anchor, [hit]" in code
+    assert "decorated = decorate(conn, fresh_anchor, [dict(hit)]" in code
+    assert "output.append({**decorated[0], 'ordinal': ordinal})" in code
     assert "'SOURCE_REVOKED_OR_CHANGED'" in code
     assert "k not in ('items', 'conflict_ids', 'version_conflicts', 'gaps')" in code
 

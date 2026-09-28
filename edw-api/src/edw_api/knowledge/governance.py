@@ -12,12 +12,16 @@ AUTHORITY = ('law', 'company', 'project', 'product', 'approved_history',
              'department', 'internal', 'allowed_external', 'llm_general')
 
 
-def applicable(row, anchor, now=None):
-    now = now or datetime.now(timezone.utc)
-    return (row['effective_from'] <= now and (row['effective_until'] is None or now < row['effective_until'])
-            and row['project_id'] == anchor['project_id']
+def in_scope(row, anchor):
+    return (row['project_id'] == anchor['project_id']
             and (row['product_id'] is None or row['product_id'] == anchor['product_id'])
             and (row['customer_id'] is None or row['customer_id'] == anchor['customer_id']))
+
+
+def applicable(row, anchor, now=None):
+    now = now or datetime.now(timezone.utc)
+    return (in_scope(row, anchor) and row['effective_from'] <= now
+            and (row['effective_until'] is None or now < row['effective_until']))
 
 
 def local_source(conn, workspace_id, anchor, source_id, version, chunk_hash, locator, classification,
@@ -47,7 +51,7 @@ def local_source(conn, workspace_id, anchor, source_id, version, chunk_hash, loc
 
 
 def current_source(conn, settings, subject, workspace_id, anchor, context, row):
-    if not applicable(row, anchor) or row['authority'] == 9:
+    if not applicable(row, anchor) or row['authority'] == 9 or row['classification'] > context.classification:
         return None
     if row['chain'] == 'attachment':
         try:
@@ -77,7 +81,8 @@ def decorate(conn, anchor, hits, workspace_id):
         key = (row['chain'], row['source_id'], row['version'], row['chunk_hash'], row['locator'])
         if applicable(row, anchor):
             by_key.setdefault(key, []).append(row)
-        else:
+        elif in_scope(row, anchor):
+            # An assertion for a different project/product/customer cannot expire this hit.
             expired.add(key)
     hits = [hit for hit in hits if source_identity(hit) not in expired or source_identity(hit) in by_key]
     visible_ids = [r['id'] for records in by_key.values() for r in records]

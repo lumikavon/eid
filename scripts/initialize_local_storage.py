@@ -45,9 +45,9 @@ def main():
             if time.monotonic() >= deadline:
                 raise RuntimeError("对象存储在 90 秒内未就绪，拒绝继续写入")
             time.sleep(2)
-    allowed_inventory = {EXPECTED["bucket"]}
-    if buckets not in (set(), allowed_inventory):
-        raise RuntimeError("对象存储 bucket 清单必须为空或仅包含本项目 bucket")
+    allowed_inventory = {EXPECTED["bucket"], EXPECTED["attachment_bucket"]}
+    if not buckets <= allowed_inventory:
+        raise RuntimeError("对象存储 bucket 清单包含非本项目 bucket")
     # 到此为止均为只读守卫；运行用户必须同时缺失或同时完全匹配。
     def verify_write_boundary():
         if storage_boundary() != initial_boundary:
@@ -59,10 +59,11 @@ def main():
     if keycloak_monitor_state != "ready":
         verify_write_boundary()
         provision_keycloak_readiness_monitor()
-    if not buckets:
+    for bucket in sorted(allowed_inventory - buckets):
         verify_write_boundary()
-        client.create_bucket(Bucket=EXPECTED["bucket"])
-    client.head_bucket(Bucket=EXPECTED["bucket"])
+        client.create_bucket(Bucket=bucket)
+    for bucket in allowed_inventory:
+        client.head_bucket(Bucket=bucket)
     # 创建后重新运行完整守卫，只有最终状态全部匹配时才报告初始化成功。
     verify_migration_target(os.environ.get("EID_MIGRATION_DATABASE_URL", ""))
     print("所选隔离开发环境的对象存储已就绪")

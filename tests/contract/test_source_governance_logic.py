@@ -52,6 +52,12 @@ def test_expired_or_inapplicable_source_is_not_reexposed_by_a_hit():
     assert not applicable(source(1, 'law'), {**ANCHOR, 'product_id': 'different'})
 
 
+def test_other_scope_assertion_does_not_expire_an_authorized_hit():
+    other = source(1, 'shared-source')
+    other['product_id'] = 'model-b'
+    result = decorate(FakeConnection([other]), ANCHOR, [hit(other)], 'w')
+    assert len(result) == 1 and result[0]['governance'] == []
+
 def test_enterprise_side_never_uses_stored_statement_as_access():
     row = dict(source(1, 'law'), classification=0, statement='limit 10 kW',
                value='10', unit='kW', conditions='test', workspace_id='w')

@@ -12,6 +12,8 @@ COPY edw-api/pyproject.toml edw-api/pyproject.toml
 COPY edw-worker/pyproject.toml edw-worker/pyproject.toml
 COPY edw-api/src edw-api/src
 COPY edw-worker/src edw-worker/src
+# Optional offline model injection. The default context contains no det/rec weights.
+COPY deployment/ocr-weights/ /opt/eid-ocr/
 RUN --mount=type=cache,target=/root/.cache pip install uv==0.11.23 && uv sync --frozen --no-dev
 USER eid
 ENV PATH="/workspace/.venv/bin:$PATH" PYTHONPATH="/workspace/edw-api/src:/workspace/edw-worker/src"

@@ -4,7 +4,7 @@ import {boundedJson} from '../../http/bounded-json';
 import {document,type DocumentData} from '../templates/template-api';
 
 export type Claim={id:string;document_version_id:string;section_id:string;block_id:string;start_offset:number;end_offset:number;statement:string;claim_type:string;conditions:string;value:string;unit:string;critical:boolean;status:'supported'|'partially_supported'|'conflicting'|'unsupported'|'unknown';needs_review:boolean};
-export type Trace={claim_id:string;state:'current'|'unavailable';links:{id:string;relation:'supports'|'conflicts'|'contextual';quoted_text:string;source_id:string;version:string;locator:string;chunk_hash:string}[]};
+export type Trace={claim_id:string;state:'current'|'needs_review';links:{id:string;relation:'supports'|'conflicts'|'contextual';quoted_text:string;source_id:string;version:string;locator:string;chunk_hash:string;can_cite:boolean}[]};
 export type Bookmark={base_version_id:string;revision:number;section_id:string;block_id:string;start_offset:number;end_offset:number;selected_text:string};
 const id=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function call(current:WorkspaceAccess,documentId:string,path:string,signal:AbortSignal,body?:unknown):Promise<unknown>{
@@ -20,7 +20,7 @@ export async function getClaims(current:WorkspaceAccess,documentId:string,signal
 }
 export async function getTrace(current:WorkspaceAccess,documentId:string,claimId:string,signal:AbortSignal):Promise<Trace>{
  const value=await call(current,documentId,`/claims/${claimId}/trace`,signal) as Trace;
- if(value.claim_id!==claimId||!Array.isArray(value.links)||value.links.length>30||value.links.some(x=>!id.test(x.id)||typeof x.quoted_text!=='string'))throw Error('来源追溯无效');return value;
+ if(value.claim_id!==claimId||!Array.isArray(value.links)||value.links.length>30||value.links.some(x=>!id.test(x.id)||typeof x.quoted_text!=='string'||typeof x.can_cite!=='boolean'))throw Error('来源追溯无效');return value;
 }
 export async function extractClaims(current:WorkspaceAccess,documentId:string,signal:AbortSignal){return call(current,documentId,'/claims/extract',signal,{})}
 export async function declareClaim(current:WorkspaceAccess,documentId:string,body:Bookmark&{claim_type:string;conditions:string;value:string;unit:string;critical:boolean},signal:AbortSignal){

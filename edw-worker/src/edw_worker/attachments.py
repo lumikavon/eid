@@ -15,9 +15,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from psycopg.types.json import Jsonb
-from edw_api.access.policy import AccessDenied
 
-from .access import current_access
 from .task_store import call
 from .template_validation import SANDBOX, _sandbox_command
 
@@ -77,13 +75,20 @@ def process(identifier):
         return
     # Access is checked at claim and again before the security-definer commit.
     try:
-        current_access(str(claim["delegation"]), "resource:read", f"attachment:{attachment_id}")
+        bucket = claim.get("bucket")
+        if bucket == os.environ["EID_ATTACHMENT_BUCKET"]:
+            access_key, secret_key = os.environ["EID_ATTACHMENT_ACCESS_KEY"], os.environ["EID_ATTACHMENT_SECRET_KEY"]
+        elif bucket == os.environ["EID_S3_BUCKET"]:
+            # Pre-cutover objects retain their immutable original bucket. Only the
+            # existing read-only worker identity can read them; new uploads never use it.
+            access_key, secret_key = os.environ["EID_S3_ACCESS_KEY"], os.environ["EID_S3_SECRET_KEY"]
+        else:
+            raise ValueError("Unknown attachment storage bucket")
         client = boto3.client("s3", endpoint_url=os.environ["EID_S3_ENDPOINT_URL"],
-                              aws_access_key_id=os.environ["EID_S3_ACCESS_KEY"],
-                              aws_secret_access_key=os.environ["EID_S3_SECRET_KEY"],
+                              aws_access_key_id=access_key, aws_secret_access_key=secret_key,
                               config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 1}))
         try:
-            obj = client.get_object(Bucket=os.environ["EID_S3_BUCKET"], Key=claim["key"])
+            obj = client.get_object(Bucket=bucket, Key=claim["key"])
             try:
                 raw = obj["Body"].read(MAX_BYTES + 1)
             finally:
@@ -94,7 +99,6 @@ def process(identifier):
             pages, error = None, "INTEGRITY_FAILED"
         else:
             pages, error = inspect(claim["kind"], raw)
-        current_access(str(claim["delegation"]), "resource:read", f"attachment:{attachment_id}")
         committed = call("SELECT eid_attachment_finish_v1(%s,%s,%s,%s,%s)",
                          (attachment_id, owner, claim["hash"], Jsonb(pages) if pages is not None else None, error))
         if committed is not True:
@@ -102,13 +106,6 @@ def process(identifier):
     except Exception as exc:
         # Uncertain dependency/policy failures leave a fenced lease for a bounded retry;
         # no untrusted content enters logs or messages.
-        if isinstance(exc, AccessDenied):
-            try:
-                # Database is the final authority; this transitions revoked leases to BLOCKED.
-                call("SELECT eid_attachment_finish_v1(%s,%s,%s,%s,%s)",
-                     (attachment_id, owner, claim["hash"], None, "PARSER_FAILED"))
-            except Exception:
-                pass
         logger.warning("attachment_processing_failed error_type=%s", type(exc).__name__)
 
 
@@ -126,7 +123,7 @@ def cleanup_orphans():
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         removed = 0
         for listing in client.get_paginator("list_objects_v2").paginate(
-                Bucket=os.environ["EID_S3_BUCKET"], Prefix="attachment-quarantine/"):
+                Bucket=os.environ["EID_ATTACHMENT_BUCKET"], Prefix="attachment-quarantine/"):
             for item in listing.get("Contents", []):
                 key, modified = item.get("Key"), item.get("LastModified")
                 if not key or not isinstance(modified, datetime) or modified >= cutoff:
@@ -134,7 +131,7 @@ def cleanup_orphans():
                 if call("SELECT eid_attachment_orphan_v1(%s)", (key,)) is not True:
                     continue
                 try:
-                    client.delete_object(Bucket=os.environ["EID_S3_BUCKET"], Key=key)
+                    client.delete_object(Bucket=os.environ["EID_ATTACHMENT_BUCKET"], Key=key)
                 except (BotoCoreError, ClientError) as exc:
                     logger.warning("attachment_orphan_cleanup_failed error_type=%s", type(exc).__name__)
                     continue

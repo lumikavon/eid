@@ -43,9 +43,9 @@ def prepare_image(encoded: str):
     return data, sha256(data).hexdigest(), width, height
 
 
-def object_client(settings):
+def object_client(settings, *, quarantine=False):
     return boto3.client("s3", endpoint_url=settings.s3_endpoint_url,
-                        aws_access_key_id=settings.s3_access_key,
-                        aws_secret_access_key=settings.s3_secret_key,
+                        aws_access_key_id=settings.attachment_access_key if quarantine else settings.s3_access_key,
+                        aws_secret_access_key=settings.attachment_secret_key if quarantine else settings.s3_secret_key,
                         config=Config(connect_timeout=2, read_timeout=5,
                                       retries={"max_attempts": 1}))

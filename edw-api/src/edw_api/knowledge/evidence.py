@@ -80,6 +80,8 @@ def prepare(settings, job):
             local = []
             for row in rows[:10]:
                 hit = safe_hit(row)
+                if hit['classification'] > live.classification:
+                    continue
                 try:
                     text = local_source(conn, job['workspace_id'], project, hit['source_id'], hit['version'],
                                         hit['chunk_hash'], hit['locator'], hit['classification'], hit['page'], hit['ordinal'], job['subject'])
@@ -163,6 +165,9 @@ def commit(settings, job, fence, prepared):
             raise AccessDenied()
         accepted = []
         for hit in items:
+            if hit['classification'] > access.classification:
+                gaps.append('SOURCE_REVOKED_OR_CHANGED')
+                continue
             if hit['chain'] == 'enterprise':
                 if _identity(hit) not in proofs:
                     continue
@@ -179,7 +184,7 @@ def commit(settings, job, fence, prepared):
             if not current_hit:
                 gaps.append('SOURCE_EXPIRED')
                 continue
-            accepted.append(current_hit[0])
+            accepted.append({**current_hit[0], 'ordinal': len(accepted) + 1})
         # Version conflicts are retained (not coalesced by source id).
         versions = {}
         conflicts = set()
@@ -258,7 +263,9 @@ def visible(settings, job):
         if fresh.policy_epoch != context.policy_epoch:
             raise AccessDenied()
         output = []
-        for hit in content['items']:
+        for ordinal, hit in enumerate(content['items'], 1):
+            if hit['classification'] > fresh.classification:
+                continue
             if hit['chain'] == 'enterprise':
                 if _identity(hit) not in proofs:
                     continue
@@ -269,9 +276,10 @@ def visible(settings, job):
                         continue
                 except AccessDenied:
                     continue
-            if not decorate(conn, fresh_anchor, [hit], job['workspace_id']):
+            decorated = decorate(conn, fresh_anchor, [dict(hit)], job['workspace_id'])
+            if not decorated:
                 continue
-            output.append(hit)
+            output.append({**decorated[0], 'ordinal': ordinal})
         # No counts for denied passages. Missing entries are represented only as a safe state.
         live_conflicts = sorted({g['conflict_id'] for hit in output for g in hit.get('governance', []) if g.get('conflict_id')})
         versions, version_conflicts = {}, set()
@@ -280,10 +288,11 @@ def visible(settings, job):
             if key in versions and versions[key] != hit['version']:
                 version_conflicts.add(hit['source_id'])
             versions[key] = hit['version']
-        return {'id': str(pack['id']), 'content_hash': pack['content_hash'],
-                **{k: v for k, v in content.items() if k not in ('items', 'conflict_ids', 'version_conflicts', 'gaps')},
-                'items': output, 'conflict_ids': live_conflicts, 'version_conflicts': sorted(version_conflicts),
-                'gaps': sorted(set([g for g in content['gaps'] if g != 'SOURCE_CONFLICT_REQUIRES_REVIEW']
-                                   + (['SOURCE_CONFLICT_REQUIRES_REVIEW'] if live_conflicts or version_conflicts else [])
-                                   + (['SOURCE_REVOKED_OR_CHANGED'] if len(output) != len(content['items']) else []))),
-                'state': 'insufficient'}
+        view = {k: v for k, v in content.items() if k not in ('items', 'conflict_ids', 'version_conflicts', 'gaps')}
+        view.update(items=output, conflict_ids=live_conflicts, version_conflicts=sorted(version_conflicts),
+                    gaps=sorted(set([g for g in content['gaps'] if g != 'SOURCE_CONFLICT_REQUIRES_REVIEW']
+                                     + (['SOURCE_CONFLICT_REQUIRES_REVIEW'] if live_conflicts or version_conflicts else [])
+                                     + (['SOURCE_REVOKED_OR_CHANGED'] if len(output) != len(content['items']) else []))),
+                    state='insufficient')
+        return {'id': str(pack['id']), 'snapshot_hash': pack['content_hash'],
+                'view_hash': hashlib.sha256(canonical(view)).hexdigest(), **view}

@@ -1,5 +1,6 @@
 """Scoped retrieval; never reuse discovery titles or upload-time delegation as Evidence."""
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from hashlib import sha256
 import math
 from uuid import UUID
@@ -13,8 +14,8 @@ from ..auth import bearer_token
 from ..db import connection
 from ..errors import ApiError
 from ..task_contract import KnowledgeSearchInput as Search
-from .gateway import retrieve
-from .governance import decorate
+from .gateway import retrieve, verify_source
+from .governance import decorate, local_source
 
 
 def model_call(endpoint: str, body: dict, key: str):
@@ -209,6 +210,11 @@ def create_router(settings, verify):
                     item['reranker_version'] = 'bge-reranker-v2-m3'
                 hits.sort(key=lambda item: item['rerank_score'], reverse=True)
                 status['rerank'] = 'available'
+        # Reattest each exact enterprise excerpt at the final network boundary. A search
+        # response alone is never a current-use authorization.
+        enterprise = [item for item in enterprise if verify_source(
+            settings, current.subject, workspace_id, anchor, context, item,
+            metadata['context_version']) == item['excerpt']]
         # Recheck anchor and epoch after the external verification, without an open network transaction.
         with database() as conn:
             latest, fresh, state = scope(conn, current.subject, workspace_id,
@@ -222,20 +228,16 @@ def create_router(settings, verify):
             current_hits = []
             for item in hits:
                 try:
-                    _, resource, auth = checked(conn, current.subject, workspace_id,
-                                                'resource:read', UUID(item['document_id']))
-                    row = conn.execute('''SELECT a.sha256,a.classification,p.state,c.content_hash
-                        FROM attachment a JOIN attachment_parse p ON p.attachment_id=a.id
-                        JOIN attachment_chunk c ON c.attachment_id=a.id AND c.page_number=%s AND c.ordinal=%s
-                        WHERE a.id=%s AND a.workspace_id=%s AND a.document_id=%s''',
-                        (item['page'],item['ordinal'],UUID(item['source_id']),workspace_id,UUID(item['document_id']))).fetchone()
-                    if (resource['project_id'] == anchor['project_id'] and row and row['sha256'] == item['version']
-                            and row['content_hash'] == item['chunk_hash']
-                            and row['classification'] <= auth.classification and row['state'] in ('SUCCEEDED','PARTIAL')):
+                    if local_source(conn, workspace_id, latest, item['source_id'], item['version'],
+                                    item['chunk_hash'], item['locator'], item['classification'], item['page'],
+                                    item['ordinal'], current.subject) == item['excerpt']:
                         current_hits.append(item)
                 except AccessDenied:
                     continue
             hits = current_hits
+            now = datetime.now(timezone.utc)
+            enterprise = [x for x in enterprise if datetime.fromisoformat(
+                x['valid_until'].replace('Z', '+00:00')) > now]
             if command.classification is not None:
                 enterprise = [x for x in enterprise if x['classification'] <= command.classification]
             items = decorate(conn, latest, hits + enterprise, workspace_id)[:command.limit]
@@ -258,7 +260,7 @@ def create_router(settings, verify):
         if not 1 <= page <= 500 or not 1 <= ordinal <= 200:
             raise ApiError(404, 'KNOWLEDGE_NOT_FOUND', '来源不存在或不可访问')
         with database() as conn:
-            anchor, _, _ = scope(conn, current.subject, workspace_id, context_document_id, None)
+            anchor, context, _ = scope(conn, current.subject, workspace_id, context_document_id, None)
             source = conn.execute('SELECT document_id FROM attachment WHERE id=%s AND workspace_id=%s',
                                   (attachment_id, workspace_id)).fetchone()
             if not source:
@@ -269,16 +271,20 @@ def create_router(settings, verify):
                 JOIN attachment_chunk c ON c.attachment_id=a.id AND c.page_number=%s AND c.ordinal=%s
                 JOIN attachment_search_index i ON i.attachment_id=a.id AND i.page_number=c.page_number AND i.ordinal=c.ordinal
                 WHERE a.id=%s AND a.workspace_id=%s AND a.sha256=p.source_sha256
-                AND i.source_sha256=p.source_sha256 AND i.content_hash=c.content_hash''',
+                AND i.source_sha256=p.source_sha256 AND i.parser_version=p.parser_version
+                AND i.content_hash=c.content_hash''',
                 (page, ordinal, attachment_id, workspace_id)).fetchone()
             if not row:
                 raise AccessDenied()
             if (resource['kind'] != 'document' or resource['project_id'] != anchor['project_id']
-                    or row['classification'] > auth.classification or row['state'] not in ('SUCCEEDED','PARTIAL')):
+                    or row['classification'] > auth.classification or row['classification'] > context.classification
+                    or row['state'] not in ('SUCCEEDED','PARTIAL')):
                 raise AccessDenied()
             latest, _, _ = scope(conn, current.subject, workspace_id, context_document_id, None)
             checked(conn, current.subject, workspace_id, 'resource:read', source['document_id'])
-            if latest['project_id'] != anchor['project_id']:
+            if latest['project_id'] != anchor['project_id'] or not decorate(conn, latest, [{
+                    'chain': 'attachment', 'source_id': str(attachment_id), 'version': row['sha256'],
+                    'chunk_hash': row['content_hash'], 'locator': row['locator']}], workspace_id):
                 raise AccessDenied()
             return {'data': {'source_id': attachment_id, 'document_id': row['document_id'],
                              'version': row['sha256'], 'parser_version': row['parser_version'],

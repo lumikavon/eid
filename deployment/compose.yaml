@@ -3,11 +3,12 @@ x-runtime-environment: &runtime
   EID_REDIS_URL: redis://redis:6379/0
   EID_S3_ENDPOINT_URL: http://seaweedfs:8333
   EID_S3_BUCKET: eid-local-artifacts
+  EID_ATTACHMENT_BUCKET: eid-local-attachment-quarantine
   EID_OIDC_ISSUER: http://localhost:18080/realms/eid-local
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0019_section_evidence
+  EID_REQUIRED_SCHEMA_REVISION: 0021_epic3_remediation
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
@@ -78,6 +79,8 @@ services:
       EID_RABBITMQ_URL: amqp://eid_api:local-api-broker-only@rabbitmq:5672/eid-local
       EID_S3_ACCESS_KEY: eid-s3-api
       EID_S3_SECRET_KEY: local-s3-api-read-only
+      EID_ATTACHMENT_ACCESS_KEY: eid-s3-attachment-api
+      EID_ATTACHMENT_SECRET_KEY: local-s3-attachment-api-only
       EID_KEYCLOAK_ADMIN_URL: http://keycloak:8080
       EID_KEYCLOAK_MONITOR_CLIENT_ID: eid-readiness-monitor
       EID_KEYCLOAK_MONITOR_CLIENT_SECRET: local-keycloak-readiness-monitor-only
@@ -115,6 +118,8 @@ services:
       EID_RABBITMQ_URL: amqp://eid_worker:local-worker-only@rabbitmq:5672/eid-local
       EID_S3_ACCESS_KEY: eid-s3-worker
       EID_S3_SECRET_KEY: local-s3-worker-read-only
+      EID_ATTACHMENT_ACCESS_KEY: eid-s3-attachment-worker
+      EID_ATTACHMENT_SECRET_KEY: local-s3-attachment-worker-only
       EID_EVIDENCE_WAKE_KEY: ${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}
       EID_BGE_M3_ENDPOINT: ${EID_BGE_M3_ENDPOINT:-}
     depends_on: {api: {condition: service_started}}

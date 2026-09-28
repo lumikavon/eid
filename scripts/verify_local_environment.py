@@ -70,6 +70,7 @@ EXPECTED = dict(
     compose_project=PROJECT,
     marker="eid-local-dev-v1",
     bucket="eid-local-artifacts",
+    attachment_bucket="eid-local-attachment-quarantine",
     rabbitmq_vhost=PROJECT,
     keycloak_realm=PROJECT,
     keycloak_client="eid-web",
@@ -127,19 +128,34 @@ S3_IDENTITIES = {
         "name": "eid-s3-bootstrap",
         "access_key": "eid-s3-bootstrap",
         "secret_key": "local-s3-bootstrap-admin-only",
-        "actions": ["Admin", "Read:eid-local-artifacts"],
+        "actions": ["Admin", "Read:eid-local-artifacts", "Read:eid-local-attachment-quarantine"],
     },
     "api": {
         "name": "eid-s3-api",
         "access_key": "eid-s3-api",
         "secret_key": "local-s3-api-read-only",
-        "actions": ["Read:eid-local-artifacts"],
+        "actions": ["Read:eid-local-artifacts", "Write:eid-local-artifacts"],
     },
     "worker": {
         "name": "eid-s3-worker",
         "access_key": "eid-s3-worker",
         "secret_key": "local-s3-worker-read-only",
         "actions": ["Read:eid-local-artifacts"],
+    },
+    "attachment_api": {
+        "name": "eid-s3-attachment-api", "access_key": "eid-s3-attachment-api",
+        "secret_key": "local-s3-attachment-api-only",
+        "actions": ["Read:eid-local-attachment-quarantine", "Write:eid-local-attachment-quarantine"],
+    },
+    "attachment_worker": {
+        "name": "eid-s3-attachment-worker", "access_key": "eid-s3-attachment-worker",
+        "secret_key": "local-s3-attachment-worker-only",
+        "actions": ["Read:eid-local-attachment-quarantine"],
+    },
+    "cleaner": {
+        "name": "eid-s3-cleaner", "access_key": "eid-s3-cleaner",
+        "secret_key": "local-s3-cleaner-write-only",
+        "actions": ["Read:eid-local-attachment-quarantine", "Write:eid-local-attachment-quarantine"],
     },
 }
 
@@ -849,8 +865,9 @@ def verify_bucket():
     verify_s3_configuration()
     bootstrap = s3_client("bootstrap")
     buckets = {item["Name"] for item in bootstrap.list_buckets().get("Buckets", [])}
-    require(buckets == {EXPECTED["bucket"]}, "对象存储实际 bucket 不是本项目专属 bucket")
-    bootstrap.head_bucket(Bucket=EXPECTED["bucket"])
+    require(buckets == {EXPECTED["bucket"], EXPECTED["attachment_bucket"]}, "对象存储 bucket 清单不匹配")
+    for bucket in buckets:
+        bootstrap.head_bucket(Bucket=bucket)
     for role in ("api", "worker"):
         runtime = s3_client(role)
         runtime.head_bucket(Bucket=EXPECTED["bucket"])
@@ -863,6 +880,10 @@ def verify_bucket():
         _require_s3_access_denied(
             lambda client=runtime: client.get_bucket_acl(Bucket=EXPECTED["bucket"]),
             f"{role} bucket ACL 读取",
+        )
+        _require_s3_access_denied(
+            lambda client=runtime: client.head_bucket(Bucket=EXPECTED["attachment_bucket"]),
+            f"{role} 隔离 bucket 读取",
         )
         _require_s3_access_denied(
             lambda client=runtime: client.head_bucket(Bucket="eid-local-foreign"),

@@ -15,6 +15,7 @@ from ..errors import ApiError
 from ..knowledge.gateway import verify_source
 from ..knowledge.governance import decorate, local_source
 from ..knowledge.evidence import pinned
+from ..knowledge.routes import scope
 from .claims import classify
 from .editor_repository import editable_document, save_document
 from .repository import _document_row
@@ -88,7 +89,13 @@ def block_at(ast, section_id, block_id):
     return block
 
 
-def source_proof(settings, subject, workspace_id, document_id, pack_id, ordinal):
+def citation_matches_claim(claim, link):
+    """A historical citation can trace only the same current statement/value."""
+    return (claim['statement'] in link['citation_selected_text']
+            and claim['value'] in link['quoted_text']
+            and (not claim['conditions'] or claim['conditions'] in link['quoted_text']))
+
+def source_proof(settings, subject, workspace_id, document_id, pack_id, ordinal, *, historical=False):
     # No gateway request under a write transaction. This first phase grants nothing by itself.
     with connection(settings) as conn:
         _, resource, _ = checked(conn, subject, workspace_id, 'resource:read', document_id)
@@ -100,11 +107,16 @@ def source_proof(settings, subject, workspace_id, document_id, pack_id, ordinal)
             (pack_id, workspace_id, document_id, ordinal)).fetchone()
         if not row:
             raise ApiError(404, 'EVIDENCE_NOT_FOUND', '来源不可访问')
-        _, _, anchor, context, state = pinned(conn, subject, workspace_id, document_id,
-            row['section_id'], row['outline_version_id'], row['context_version_id'], row['document_version_id'])
-        if str(row['actor_id']) != context.actor_id or row['subject'] != subject:
+        if historical:
+            anchor, context, state = scope(conn, subject, workspace_id, document_id, None)
+        else:
+            _, _, anchor, context, state = pinned(conn, subject, workspace_id, document_id,
+                row['section_id'], row['outline_version_id'], row['context_version_id'], row['document_version_id'])
+        # Pack job ownership is a write guard, not a read authorization for
+        # historical citations. Trace still needs the reader's current policy.
+        if not historical and (str(row['actor_id']) != context.actor_id or row['subject'] != subject):
             raise AccessDenied()
-        if state['head_version_id'] != row['document_version_id'] or state['revision'] != row['document_revision']:
+        if not historical and (state['head_version_id'] != row['document_version_id'] or state['revision'] != row['document_revision']):
             changed()
         source_row = conn.execute('SELECT * FROM section_evidence_item WHERE pack_id=%s AND ordinal=%s',
                                   (pack_id, ordinal)).fetchone()
@@ -124,14 +136,26 @@ def source_proof(settings, subject, workspace_id, document_id, pack_id, ordinal)
         if any(item.get(k) != source[k] for k in ('chain','source_id','version','chunk_hash','locator')) or item.get('excerpt') != source['excerpt']:
             changed()
         anchor = dict(anchor)
-    proof = verify_source(settings, subject, workspace_id, anchor, context, item, row['context_version_id']) if item['chain'] == 'enterprise' else None
+        row = dict(row)
+        row['_policy_epoch'] = context.policy_epoch
+        row['_project_id'] = anchor['project_id']
+        row['_context_version'] = state['context_version']
+    proof = verify_source(settings, subject, workspace_id, anchor, context, item,
+                          row['_context_version'] if historical else row['context_version_id']) if item['chain'] == 'enterprise' else None
     return row, item, proof
 
 
-def live(conn, subject, workspace_id, document_id, row, item, proof):
-    _, _, anchor, context, state = pinned(conn, subject, workspace_id, document_id,
-        row['section_id'], row['outline_version_id'], row['context_version_id'], row['document_version_id'])
-    if state['head_version_id'] != row['document_version_id'] or state['revision'] != row['document_revision']:
+def live(conn, subject, workspace_id, document_id, row, item, proof, *, historical=False):
+    if historical:
+        anchor, context, state = scope(conn, subject, workspace_id, document_id, None)
+    else:
+        _, _, anchor, context, state = pinned(conn, subject, workspace_id, document_id,
+            row['section_id'], row['outline_version_id'], row['context_version_id'], row['document_version_id'])
+    if (context.policy_epoch != row['_policy_epoch'] or anchor['project_id'] != row['_project_id']
+            or state['context_version'] != row['_context_version'] or
+            not historical and (state['head_version_id'] != row['document_version_id'] or state['revision'] != row['document_revision'])):
+        changed()
+    if item['classification'] > context.classification:
         changed()
     if item['chain'] == 'attachment':
         try:
@@ -183,7 +207,8 @@ def create_router(settings, verify):
             # A persisted positive verdict is historical until its exact source is reattested.
             # The selected Claim trace performs that live check; list reads cannot certify it.
             for item in items:
-                if item['status'] in ('supported', 'partially_supported'):
+                if item['status'] in ('supported', 'partially_supported', 'conflicting'):
+                    # Every linked verdict may have changed after source revocation.
                     item['recorded_status'] = item['status']
                     item['status'] = 'unknown'
                     item['needs_review'] = True
@@ -257,15 +282,22 @@ def create_router(settings, verify):
                                      (workspace_id, claim_id)).fetchone()
             status = classify(claim, [{'relation': command.relation, 'quoted_text': command.quoted_text}]
                               + ([{'relation': 'conflicts', 'quoted_text': ''}] if conflicts else []))
-            if status == 'supported' and any(g.get('conflict_id') for g in item.get('governance', [])):
+            if command.relation == 'contextual' and not conflicts and claim['status'] in ('supported', 'partially_supported'):
+                # Context is not evidence against an existing support link; its
+                # previously recorded verdict still requires live reattestation.
+                status = claim['status']
+            anchor, _, _ = scope(conn, current.subject, workspace_id, document_id, None)
+            governance = decorate(conn, anchor, [dict(item)], workspace_id)
+            if status in ('supported', 'partially_supported') and governance and any(
+                    g.get('conflict_id') for g in governance[0].get('governance', [])):
                 status = 'conflicting'
             # Exact text agreement is not human factual adjudication; keep review pending.
             conn.execute('UPDATE document_claim SET status=%s,needs_review=true WHERE id=%s',
                          (status, claim_id))
-            for governance in item.get('governance', []):
-                if governance.get('conflict_id'):
+            for entry in governance[0].get('governance', []) if governance else []:
+                if entry.get('conflict_id'):
                     conn.execute("INSERT INTO knowledge_dependency(workspace_id,conflict_id,kind,dependent_id,needs_review) VALUES (%s,%s,'claim',%s,true) ON CONFLICT DO NOTHING",
-                                 (workspace_id, UUID(governance['conflict_id']), claim_id))
+                                 (workspace_id, UUID(entry['conflict_id']), claim_id))
             return {'data': {'status': status, 'needs_review': True}}
 
     @router.get('/claims/{claim_id}/trace')
@@ -282,27 +314,50 @@ def create_router(settings, verify):
                 (claim_id, workspace_id, document_id)).fetchone()
             if not claim:
                 raise AccessDenied()
-            links = conn.execute('SELECT * FROM claim_evidence_link WHERE claim_id=%s AND workspace_id=%s ORDER BY created_at,id LIMIT 30',
-                                 (claim_id, workspace_id)).fetchall()
+            links = list(conn.execute('SELECT * FROM claim_evidence_link WHERE claim_id=%s AND workspace_id=%s ORDER BY created_at,id LIMIT 30',
+                                      (claim_id, workspace_id)).fetchall())
+            # Citation creation advances the document head. The citation keeps the
+            # original link, while extracted claims on the new head have new IDs.
+            citations = conn.execute('''SELECT l.*, c.selected_text AS citation_selected_text FROM document_citation c
+                JOIN claim_evidence_link l ON l.id=c.link_id AND l.workspace_id=c.workspace_id
+                WHERE c.workspace_id=%s AND c.document_id=%s AND c.document_version_id=%s
+                AND c.section_id=%s AND c.block_id=%s
+                AND c.start_offset<=%s AND c.end_offset>=%s
+                ORDER BY c.created_at,c.id LIMIT 30''',
+                (workspace_id, document_id, claim['document_version_id'], claim['section_id'],
+                 claim['block_id'], claim['start_offset'], claim['end_offset'])).fetchall()
+            existing_ids = {link['id'] for link in links}
+            links.extend(link for link in citations if link['id'] not in existing_ids
+                         and citation_matches_claim(claim, link))
+            links = links[:30]
         output = []
+        conflict_seen = False
         for link in links:
             try:
                 row, item, proof = source_proof(settings, current.subject, workspace_id, document_id,
-                                                link['pack_id'], link['item_ordinal'])
+                                                link['pack_id'], link['item_ordinal'], historical=True)
                 with database() as conn:
                     head(conn, current.subject, workspace_id, document_id, claim['document_version_id'],
                          conn.execute('SELECT revision FROM document WHERE id=%s AND workspace_id=%s',
                                       (document_id, workspace_id)).fetchone()['revision'])
-                    text = live(conn, current.subject, workspace_id, document_id, row, item, proof)
+                    text = live(conn, current.subject, workspace_id, document_id, row, item, proof, historical=True)
                     if (link['source_version'] != item['version'] or link['chunk_hash'] != item['chunk_hash']
                             or link['locator'] != item['locator'] or link['quoted_text'] not in text):
                         continue
+                    anchor, _, _ = scope(conn, current.subject, workspace_id, document_id, None)
+                    governed = decorate(conn, anchor, [dict(item)], workspace_id)
+                    if not governed:
+                        continue
+                    conflict_seen |= link['relation'] == 'conflicts' or any(
+                        g.get('conflict_id') for g in governed[0].get('governance', []))
                     output.append({'id': link['id'], 'relation': link['relation'], 'quoted_text': link['quoted_text'],
                                    'source_id': item['source_id'], 'version': item['version'],
-                                   'locator': item['locator'], 'chunk_hash': item['chunk_hash']})
+                                   'locator': item['locator'], 'chunk_hash': item['chunk_hash'],
+                                   'can_cite': link['id'] in existing_ids})
             except (AccessDenied, ApiError):
                 continue
-        return {'data': {'claim_id': claim_id, 'links': output, 'state': 'current' if output else 'unavailable'}}
+        return {'data': {'claim_id': claim_id, 'links': output,
+                         'state': 'current' if output and len(output) == len(links) and not conflict_seen else 'needs_review'}}
 
     @router.post('/citations')
     def cite(workspace_id: UUID, document_id: UUID, command: Cite, request: Request, response: Response, current=Depends(actor)):
@@ -320,10 +375,16 @@ def create_router(settings, verify):
         with database() as conn:
             head(conn, current.subject, workspace_id, document_id, command.base_version_id, command.revision, edit=True)
             text = live(conn, current.subject, workspace_id, document_id, row, item, proof)
-            claim = conn.execute('''SELECT value,conditions,statement FROM document_claim
+            claim = conn.execute('''SELECT * FROM document_claim
                 WHERE id=%s AND workspace_id=%s AND document_id=%s AND document_version_id=%s''',
                 (command.claim_id, workspace_id, document_id, command.base_version_id)).fetchone()
-            if (not claim or command.quoted_text != link['quoted_text'] or command.quoted_text not in text
+            conflicting = conn.execute('''SELECT 1 FROM claim_evidence_link WHERE claim_id=%s
+                AND workspace_id=%s AND relation='conflicts' LIMIT 1''',
+                (command.claim_id, workspace_id)).fetchone()
+            anchor, _, _ = scope(conn, current.subject, workspace_id, document_id, None)
+            governed = decorate(conn, anchor, [dict(item)], workspace_id)
+            if (conflicting or not governed or any(g.get('conflict_id') for g in governed[0].get('governance', []))
+                    or not claim or command.quoted_text != link['quoted_text'] or command.quoted_text not in text
                     or claim['value'] not in command.quoted_text
                     or claim['conditions'] and claim['conditions'] not in command.quoted_text
                     or command.section_id != link['claim_section'] or command.block_id != link['claim_block']
@@ -369,6 +430,18 @@ def create_router(settings, verify):
                                                   revision=command.revision,
                                                   ast=DomainAst.model_validate(ast)),
                                   request.state.request_id, request.state.trace_id, controlled_citation=True)
+            # Saving advances the head and re-extracts deterministic candidates. Carry
+            # this selected (possibly user-declared/unknown-type) claim forward as a
+            # pending assertion, without copying its old evidence authorization.
+            conn.execute('''INSERT INTO document_claim(id,workspace_id,document_id,document_version_id,
+                section_id,block_id,start_offset,end_offset,statement,claim_type,conditions,value,unit,
+                critical,status,needs_review) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'unknown',true)
+                ON CONFLICT (document_version_id,block_id,start_offset,end_offset,claim_type)
+                DO UPDATE SET conditions=EXCLUDED.conditions,value=EXCLUDED.value,unit=EXCLUDED.unit,
+                    critical=EXCLUDED.critical,status='unknown',needs_review=true''',
+                (uuid4(), workspace_id, document_id, saved['version_id'], claim['section_id'], claim['block_id'],
+                 claim['start_offset'], claim['end_offset'], claim['statement'], claim['claim_type'],
+                 claim['conditions'], claim['value'], claim['unit'], claim['critical']))
             conn.execute('''INSERT INTO document_citation(id,workspace_id,document_id,document_version_id,claim_id,link_id,
                 section_id,block_id,start_offset,end_offset,selected_text,quoted_text)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',

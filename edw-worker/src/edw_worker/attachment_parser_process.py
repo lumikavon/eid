@@ -9,7 +9,6 @@ import errno
 from hashlib import sha256
 from io import BytesIO
 import json
-import os
 import sys
 import zipfile
 from xml.etree import ElementTree
@@ -71,7 +70,8 @@ def failed(number, error="PAGE_FAILED"):
 def ocr_image(image):
     # No model downloads: weights must already be baked into the isolated image.
     from pathlib import Path
-    if not all(Path('/opt/eid-ocr', part).is_dir() for part in ('det','rec')):
+    if not all(all(Path('/opt/eid-ocr', part, name).is_file() for name in ('inference.pdmodel', 'inference.pdiparams'))
+               for part in ('det', 'rec')):
         raise ImportError('OCR model unavailable')
     from paddleocr import PaddleOCR
     engine = PaddleOCR(use_angle_cls=False, lang="ch", show_log=False,

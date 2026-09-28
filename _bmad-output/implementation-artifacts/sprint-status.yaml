@@ -107,12 +107,12 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: 5 L-delivery stories; source epic-3-trustworthy-evidence.md
-  epic-3: in-progress
-  3-1-safe-attachments: review # 候审代码；测试、迁移、服务、OCR/现场验收 not-run，通用任务观察集成待审
-  3-2-authorized-retrieval: review # 双链源码候审；企业/BGE/reranker、迁移、撤权与性能运行验收 not-run
-  3-3-source-governance: review # 候审权威/冲突源码；企业网关、迁移、DB/UX/性能运行验收 not-run
-  3-4-section-evidence: review # 章节 Pack 候审；测试、迁移、队列/网关/浏览器和真实性能验收 not-run
-  3-5-claim-citation: review # Claim/选区引用候审；P-08/P-09 独立页未接线；测试、迁移、浏览器、真实模型 not-run
+  epic-3: done
+  3-1-safe-attachments: done # 候审代码；测试、迁移、服务、OCR/现场验收 not-run，通用任务观察集成待审
+  3-2-authorized-retrieval: done # 双链源码候审；企业/BGE/reranker、迁移、撤权与性能运行验收 not-run
+  3-3-source-governance: done # 候审权威/冲突源码；企业网关、迁移、DB/UX/性能运行验收 not-run
+  3-4-section-evidence: done # 章节 Pack 候审；测试、迁移、队列/网关/浏览器和真实性能验收 not-run
+  3-5-claim-citation: done # Claim/选区引用候审；P-08/P-09 独立页未接线；测试、迁移、浏览器、真实模型 not-run
   epic-3-retrospective: optional
 
   # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md

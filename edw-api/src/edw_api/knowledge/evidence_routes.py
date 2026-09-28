@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import hmac
 import time
+from threading import Event, Thread
 from uuid import UUID, uuid4
 import logging
 
@@ -30,6 +31,8 @@ def _status(job):
 def _run(settings, job_id, workspace_id):
     """Fenced attempt; no sensitive parameters in a broker message or a log."""
     fence = uuid4()
+    stop = Event()
+    heartbeat = None
     try:
         with connection(settings) as conn:
             job = conn.execute('''UPDATE section_evidence_job SET state='RUNNING',stage='planning',
@@ -41,6 +44,22 @@ def _run(settings, job_id, workspace_id):
                 (fence, job_id, workspace_id)).fetchone()
             if not job:
                 return
+        def renew():
+            while not stop.wait(25):
+                try:
+                    with connection(settings) as conn:
+                        updated = conn.execute('''UPDATE section_evidence_job SET
+                            lease_until=clock_timestamp()+interval '120 seconds'
+                            WHERE id=%s AND workspace_id=%s AND fence=%s AND state='RUNNING'
+                            AND lease_until>clock_timestamp() RETURNING id''',
+                            (job_id, workspace_id, fence)).fetchone()
+                        if not updated:
+                            return
+                except psycopg.Error:
+                    # Never replace a stale fence; commit still checks the DB lease.
+                    return
+        heartbeat = Thread(target=renew, daemon=True)
+        heartbeat.start()
         with connection(settings) as conn:
             conn.execute("UPDATE section_evidence_job SET stage='retrieving',updated_at=clock_timestamp() WHERE id=%s AND fence=%s", (job_id, fence))
         result = prepare(settings, job)
@@ -69,6 +88,10 @@ def _run(settings, job_id, workspace_id):
         except psycopg.Error:
             pass
         log.warning('evidence_build_retry error_type=%s', type(exc).__name__)
+    finally:
+        stop.set()
+        if heartbeat is not None:
+            heartbeat.join(timeout=2)
 
 
 def _schedule(settings, background, job_id, workspace_id, document_id):
@@ -153,6 +176,11 @@ def create_router(settings, verify):
             db_now = conn.execute('SELECT clock_timestamp() AS now').fetchone()['now']
             restart = (row['state'] == 'RETRY_WAIT' and row['next_retry_at'] is not None and row['next_retry_at'] <= db_now
                        or row['state'] == 'RUNNING' and row['lease_until'] is not None and row['lease_until'] < db_now)
+            if row['state'] == 'QUEUED' and (db_now - row['updated_at']).total_seconds() >= 10:
+                claimed = conn.execute('''UPDATE section_evidence_job SET updated_at=clock_timestamp()
+                    WHERE id=%s AND state='QUEUED' AND updated_at=%s RETURNING id''',
+                    (job_id, row['updated_at'])).fetchone()
+                restart = bool(claimed)
             if restart and row['attempt'] >= 3:
                 row = conn.execute("""UPDATE section_evidence_job SET state='FAILED',stage='failed',
                     error_code='ATTEMPTS_EXHAUSTED',fence=NULL,lease_until=NULL,next_retry_at=NULL,
