@@ -14,3 +14,5 @@ playwright-report/
 # 这两个 bootstrap 模块是交付文件；显式覆盖用户级 *_LOCAL_*.* 忽略规则。
 !/scripts/verify_local_environment.py
 !/scripts/initialize_local_storage.py
+.claude
+.codex
