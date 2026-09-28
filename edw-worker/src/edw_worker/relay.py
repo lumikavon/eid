@@ -16,7 +16,7 @@ from kombu import Connection, Exchange, Producer, Queue
 from psycopg.types.json import Jsonb
 
 from edw_api.task_contract import TASK_NAME, parse_envelope, payload_hash
-from .task_store import call
+from .task_store import call, connection
 from .template_validation import main as validate_templates
 
 logger = logging.getLogger(__name__)
@@ -126,14 +126,36 @@ def scheduler_once(owner):
     raise RuntimeError("Invalid scheduler status")
 
 
+def dispatch_attachments():
+    # Durable DB queue: a lost publisher confirm simply causes another ID-only
+    # delivery. Fenced claim and unique canonical rows make duplicates inert.
+    from .app import app
+    with connection() as conn:
+        identifiers = [row[0] for row in conn.execute("SELECT eid_attachment_pending_v1()").fetchall()]
+    for identifier in identifiers:
+        app.send_task("eid.attachment.parse.v1", args=[str(identifier)], queue="parse_ocr",
+                      retry=False, ignore_result=True)
+
+
 def scheduler_main():
     from .log_safety import register_worker_log_safety
     register_worker_log_safety()
     logging.basicConfig(level=logging.INFO)
     owner = uuid4()
+    last_cleanup = time.monotonic()
+    last_index = 0.0
     while True:
         try:
             progressed = scheduler_once(owner)
+            dispatch_attachments()
+            if time.monotonic() - last_index >= 10:
+                last_index = time.monotonic()
+                from .app import app
+                app.send_task('eid.knowledge.index.v1', queue='retrieval', retry=False, ignore_result=True)
+            if time.monotonic() - last_cleanup >= 3600:
+                last_cleanup = time.monotonic()
+                from .attachments import cleanup_orphans
+                cleanup_orphans()
         except Exception as exc:
             logger.warning("task_scheduler_pending error_type=%s", type(exc).__name__)
             progressed = False

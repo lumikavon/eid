@@ -76,7 +76,7 @@ def read_version(conn, subject, workspace_id, document_id, version_id):
             "ast": row["ast"], "content_hash": row["content_hash"], "replayed": False}
 
 
-def save_document(conn, subject, workspace_id, document_id, command, request_id, trace_id):
+def save_document(conn, subject, workspace_id, document_id, command, request_id, trace_id, *, controlled_citation=False):
     facts, resource = editable_document(conn, subject, workspace_id, document_id, exclusive=True)
     _local_write_target(conn)
     # Serialize against concurrent writers, then compare both the immutable base and revision.
@@ -97,7 +97,8 @@ def save_document(conn, subject, workspace_id, document_id, command, request_id,
     try:
         media_ids = validate_ast(ast, expected_template_id=locked["template_version_id"],
                                  document_type=locked["document_type"],
-                                 knowledge_scope=locked["knowledge_scope"], old_ast=previous["ast"])
+                                 knowledge_scope=locked["knowledge_scope"], old_ast=previous["ast"],
+                                 controlled_citation=controlled_citation)
     except InvalidAst as exc:
         raise ApiError(422, "INVALID_DOCUMENT_AST", str(exc)) from exc
     media = conn.execute(
@@ -154,6 +155,11 @@ def save_document(conn, subject, workspace_id, document_id, command, request_id,
          Jsonb({"base_version_id": str(command.base_version_id), "revision": command.revision}),
          Jsonb({"version_id": str(version_id), "revision": next_revision}), request_id, trace_id, now),
     )
+    from .claims import extract_claims
+    extract_claims(conn, workspace_id, document_id, version_id, ast)
+    # Old version findings remain for provenance, but cannot certify the new head.
+    conn.execute("UPDATE document_claim SET needs_review=true WHERE workspace_id=%s AND document_id=%s AND document_version_id<>%s", (workspace_id, document_id, version_id))
+    conn.execute("UPDATE document_citation SET needs_review=true WHERE workspace_id=%s AND document_id=%s AND document_version_id<>%s", (workspace_id, document_id, version_id))
     return {"id": document_id, "workspace_id": workspace_id, "name": title,
             "document_type": locked["document_type"],
             "knowledge_scope": locked["knowledge_scope"],

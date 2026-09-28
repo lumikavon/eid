@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import type {WorkspaceAccess} from '../../app/access-api';
 import type {DocumentData} from './template-api';
 import {TemplateError} from './template-api';
+import AttachmentInspector from './AttachmentInspector';
 import {blankContext,confirmContext,getContext,getContextVersion,getContextVersions,saveContext,type ContextData,type ContextSnapshot} from './context-api';
 
 const stable=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
@@ -67,7 +68,8 @@ export default function ProjectContext({current,document,documentDirty,onPending
   catch(problem){if(scopeRef.current!==requestScope)return;setError(problem instanceof Error?problem.message:'确认失败');if(!protectedError(problem)&&problem instanceof TemplateError&&['timeout','unavailable','cancelled','invalid-response'].includes(problem.failure)&&(!problem.status||problem.status===408||problem.status>=500)){setBlocked(true);setStatus('确认结果未知；请重新核对当前版本')}else if(problem instanceof TemplateError&&problem.failure==='conflict')setBlocked(true)}finally{setBusy(false)}
  };
  const conflict=()=>{if(!adoptable||!saved)return;setAdoptable(false);setBlocked(false);setStatus('输入仍保留；请核对并决定是否以当前服务端版本为 base 保存')};
- return <section className="project-context" aria-label="X-15 项目上下文检查器"><h3>项目上下文 · X-15</h3><p>仅手工录入；尚未接入知识库、OCR、检索或模型。</p>
+ return <section className="project-context" aria-label="X-15 项目上下文检查器"><h3>项目上下文 · X-15</h3><p>上下文仅手工录入；附件解析结果不自动成为已确认项目事实。</p>
+  <AttachmentInspector current={current} document={document} onReject={onReject}/>
   <p role="status">{loading?'正在核对权限与上下文…':blocked?'当前版本不可用于操作':saved?.state==='CONTEXT_READY'&&!dirty&&!documentDirty?'CONTEXT_READY':'CONTEXT_PENDING'} · {status}</p>
   {saved&&!blocked&&<p>上下文版本 {saved.revision} · {saved.version_id??'尚未保存'}{saved.confirmed_at&&<> · 确认人 {saved.confirmed_by} · <time dateTime={saved.confirmed_at}>{saved.confirmed_at}</time></>}</p>}
   {versions.length>0&&<section aria-label="上下文版本历史">{versions.map(v=><button key={v.version_id} onClick={()=>void inspect(v.version_id)}>版本 {v.revision}</button>)}</section>}

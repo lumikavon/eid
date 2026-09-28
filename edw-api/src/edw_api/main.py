@@ -29,6 +29,11 @@ from .access.routes import create_router
 from .discovery.routes import create_router as create_discovery_router
 from .documents.routes import create_canonical_router, create_router as create_document_router
 from .documents.editor_routes import create_router as create_editor_router
+from .documents.claim_routes import create_router as create_claim_router
+from .attachments.routes import create_router as create_attachment_router
+from .knowledge.routes import create_router as create_knowledge_router
+from .knowledge.governance_routes import create_router as create_knowledge_governance_router
+from .knowledge.evidence_routes import create_router as create_evidence_router
 from .documents.context_routes import create_router as create_context_router
 from .documents.outline_routes import create_router as create_outline_router
 from .documents.governance_routes import create_router as create_governance_router
@@ -49,6 +54,11 @@ app.include_router(create_router(settings, lambda token: verifier.verify(token))
 app.include_router(create_discovery_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_document_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_editor_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_claim_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_attachment_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_knowledge_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_knowledge_governance_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_evidence_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_context_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_outline_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))
@@ -231,6 +241,22 @@ def _postgres_status() -> str:
                            ('document_creation_receipt','SELECT'),
                            ('document_creation_receipt','INSERT'),
                            ('document_media','SELECT'), ('document_media','INSERT'),
+                           ('attachment','SELECT'), ('attachment','INSERT'),
+                           ('attachment_parse','SELECT'), ('attachment_parse','INSERT'),
+                           ('attachment_page','SELECT'), ('attachment_chunk','SELECT'),
+                           ('attachment_search_index','SELECT'),
+                           ('knowledge_assertion','SELECT'), ('knowledge_conflict','SELECT'),
+                           ('knowledge_disposition','SELECT'), ('knowledge_dependency','SELECT'),
+                           ('section_evidence_job','SELECT'), ('section_evidence_job','INSERT'),
+                           ('section_evidence_job','UPDATE'), ('section_evidence_pack','SELECT'),
+                           ('section_evidence_pack','INSERT'), ('section_evidence_query','INSERT'),
+                           ('section_evidence_item','INSERT'),
+                           ('document_claim','SELECT'), ('document_claim','INSERT'),
+                           ('claim_evidence_link','SELECT'), ('claim_evidence_link','INSERT'),
+                           ('document_citation','SELECT'), ('document_citation','INSERT'),
+                           ('knowledge_assertion','INSERT'), ('knowledge_conflict','INSERT'),
+                           ('knowledge_conflict','UPDATE'), ('knowledge_disposition','INSERT'),
+                           ('knowledge_dependency','UPDATE'), ('knowledge_dependency','INSERT'),
                            ('project_context_version','SELECT'), ('project_context_version','INSERT'),
                            ('project_context_head','SELECT'), ('project_context_head','INSERT'),
                            ('project_context_confirmation','SELECT'), ('project_context_confirmation','INSERT'),
@@ -264,6 +290,7 @@ def _postgres_status() -> str:
                 AND has_column_privilege(current_user,'discovery_favorite','updated_at','UPDATE')
                 AND NOT has_table_privilege(current_user,'access_audit','SELECT')
                 AND NOT has_table_privilege(current_user,'durable_task','UPDATE')
+                AND NOT has_table_privilege(current_user,'section_evidence_pack','UPDATE')
                 AND NOT has_table_privilege(current_user,'task_attempt_stage','INSERT')
                 AND NOT has_table_privilege(current_user,'task_effect_intent','INSERT')
                 AND NOT has_table_privilege(current_user,'task_notification','INSERT')
@@ -334,6 +361,11 @@ def _postgres_status() -> str:
                 AND NOT has_table_privilege('eid_worker','document_version','SELECT')
                 AND NOT has_table_privilege('eid_worker','document','INSERT')
                 AND NOT has_table_privilege('eid_worker','document_media','SELECT')
+                AND NOT has_table_privilege('eid_worker','attachment','SELECT')
+                AND NOT has_table_privilege('eid_worker','document_claim','SELECT')
+                AND NOT has_table_privilege('eid_worker','claim_evidence_link','SELECT')
+                AND NOT has_table_privilege('eid_worker','document_citation','SELECT')
+                AND has_function_privilege('eid_worker','eid_attachment_claim_v1(uuid,uuid)','EXECUTE')
                 FROM resolved
                 """
             ).fetchone()[0]

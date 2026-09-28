@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/claim-citation-v1.schema.json",
+  "title": "Version-pinned Claim, evidence relation and exact citation",
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "document_version_id", "section_id", "block_id", "start_offset", "end_offset", "statement", "claim_type", "conditions", "value", "unit", "critical", "status", "needs_review"],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"}, "document_version_id": {"$ref": "#/$defs/uuid"},
+        "section_id": {"$ref": "#/$defs/uuid"}, "block_id": {"$ref": "#/$defs/uuid"},
+        "start_offset": {"type": "integer", "minimum": 0}, "end_offset": {"type": "integer", "minimum": 1},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "claim_type": {"type": "string", "minLength": 1, "maxLength": 80},
+        "conditions": {"type": "string", "maxLength": 512}, "value": {"type": "string", "minLength": 1, "maxLength": 256},
+        "unit": {"type": "string", "maxLength": 64}, "critical": {"type": "boolean"},
+        "status": {"enum": ["supported", "partially_supported", "conflicting", "unsupported", "unknown"]},
+        "needs_review": {"type": "boolean"}
+      }
+    },
+    "relation": {"enum": ["supports", "conflicts", "contextual"]},
+    "bookmark": {
+      "type": "object",
+      "required": ["base_version_id", "revision", "section_id", "block_id", "start_offset", "end_offset", "selected_text"],
+      "properties": {
+        "base_version_id": {"$ref": "#/$defs/uuid"}, "revision": {"type": "integer", "minimum": 1},
+        "section_id": {"$ref": "#/$defs/uuid"}, "block_id": {"$ref": "#/$defs/uuid"},
+        "start_offset": {"type": "integer", "minimum": 0}, "end_offset": {"type": "integer", "minimum": 1},
+        "selected_text": {"type": "string", "minLength": 1, "maxLength": 4000}
+      }
+    },
+    "citation": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/bookmark"}, {"type": "object", "required": ["claim_id", "link_id", "quoted_text"], "properties": {"claim_id": {"$ref": "#/$defs/uuid"}, "link_id": {"$ref": "#/$defs/uuid"}, "quoted_text": {"type": "string", "minLength": 1, "maxLength": 4000}}}]}
+  }
+}

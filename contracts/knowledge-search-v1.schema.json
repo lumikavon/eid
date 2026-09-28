@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eid.local/contracts/knowledge-search-v1.schema.json",
+  "title": "Authorized knowledge search v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data"],
+  "properties": {
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "chains", "complete", "limited", "query_sha256", "policy_epoch", "scope", "retrieval_version"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 20, "items": {"type": "object", "required": ["chain", "source_id", "version", "chunk_hash", "locator", "excerpt", "classification", "policy", "keyword_version"], "properties": {
+          "chain": {"enum": ["attachment", "enterprise"]}, "category": {"enum": ["attachment", "enterprise", "golden"]},
+          "source_id": {"type": "string"}, "document_id": {"type": "string", "format": "uuid"},
+          "version": {"type": "string"}, "parser_version": {"type": "string"}, "chunk_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "page": {"type": "integer"}, "ordinal": {"type": "integer"}, "locator": {"type": "string"},
+          "excerpt": {"type": "string"}, "classification": {"type": "integer", "minimum": 0, "maximum": 3},
+          "keyword_version": {"type": "string"}, "dictionary_version": {"type": "string"}, "embedding_version": {"type": ["string", "null"]},
+          "keyword_match": {"type": "boolean"}, "semantic_score": {"type": ["number", "null"]},
+          "rerank_score": {"type": "number"}, "reranker_version": {"type": "string"},
+          "valid_until": {"type": "string", "format": "date-time"}, "project_id": {"type": "string"},
+          "policy": {"type": "string"},
+          "product_id": {"type": ["string", "null"]}, "customer_id": {"type": ["string", "null"]},
+          "governance": {"type": "array", "items": {"type": "object", "required": ["assertion_id", "authority", "authority_label", "effective_from", "effective_until"], "properties": {
+            "assertion_id": {"type": "string", "format": "uuid"}, "authority": {"type": "integer", "minimum": 1, "maximum": 8},
+            "authority_label": {"type": "string"}, "conflict_id": {"type": ["string", "null"]},
+            "effective_from": {"type": "string", "format": "date-time"}, "effective_until": {"type": ["string", "null"], "format": "date-time"}
+          }}}
+        }}},
+        "chains": {"type": "object", "additionalProperties": {"enum": ["available", "unavailable"]}, "required": ["keyword", "semantic", "rerank", "enterprise", "golden"]},
+        "complete": {"const": false}, "limited": {"type": "boolean"},
+        "query_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "policy_epoch": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "scope": {"const": "same_project_authorized_documents"}, "retrieval_version": {"type": "string"}
+      }
+    }
+  }
+}

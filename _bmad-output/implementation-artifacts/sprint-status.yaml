@@ -79,7 +79,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-26-2026 22:39"
+last_updated: "09-28-2026 06:03"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -107,12 +107,12 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: 5 L-delivery stories; source epic-3-trustworthy-evidence.md
-  epic-3: backlog
-  3-1-safe-attachments: backlog
-  3-2-authorized-retrieval: backlog
-  3-3-source-governance: backlog
-  3-4-section-evidence: backlog
-  3-5-claim-citation: backlog
+  epic-3: in-progress
+  3-1-safe-attachments: review # 候审代码；测试、迁移、服务、OCR/现场验收 not-run，通用任务观察集成待审
+  3-2-authorized-retrieval: review # 双链源码候审；企业/BGE/reranker、迁移、撤权与性能运行验收 not-run
+  3-3-source-governance: review # 候审权威/冲突源码；企业网关、迁移、DB/UX/性能运行验收 not-run
+  3-4-section-evidence: review # 章节 Pack 候审；测试、迁移、队列/网关/浏览器和真实性能验收 not-run
+  3-5-claim-citation: review # Claim/选区引用候审；P-08/P-09 独立页未接线；测试、迁移、浏览器、真实模型 not-run
   epic-3-retrospective: optional
 
   # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md

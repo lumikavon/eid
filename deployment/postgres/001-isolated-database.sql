@@ -4,6 +4,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 COMMENT ON DATABASE eid_local_dev IS 'eid-local-dev-v1';
+CREATE EXTENSION IF NOT EXISTS vector WITH VERSION '0.8.6';
 CREATE ROLE eid_migrator LOGIN PASSWORD 'local-migrate-only';
 CREATE ROLE eid_api LOGIN PASSWORD 'local-api-only';
 CREATE ROLE eid_worker LOGIN PASSWORD 'local-worker-only';

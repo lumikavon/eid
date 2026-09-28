@@ -23,7 +23,12 @@ class Settings(BaseSettings):
     keycloak_admin_url: str = "http://keycloak:8080"
     keycloak_monitor_client_id: str = "eid-readiness-monitor"
     keycloak_monitor_client_secret: str = "local-keycloak-readiness-monitor-only"
-    required_schema_revision: str = "0015_outline_confirmation"
+    required_schema_revision: str = "0019_section_evidence"
+    bge_m3_endpoint: str = ""
+    reranker_endpoint: str = ""
+    knowledge_gateway_url: str = ""
+    knowledge_gateway_key: str = ""
+    evidence_wake_key: str = ""
     discovery_policy_environment: Literal["production", "isolated_development"] = "production"
     request_id_header: str = Field(default="X-Request-ID")
     worker_node_name: str = "eid-worker@worker"

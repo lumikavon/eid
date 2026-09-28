@@ -98,7 +98,7 @@ def _runs(content):
 
 
 def validate_ast(ast, *, expected_template_id, document_type, knowledge_scope,
-                 old_ast=None):
+                 old_ast=None, controlled_citation=False):
     """Validate for save; reject opaque edits and arbitrary embedded/remote resources.
 
     Returns the referenced image IDs for the application layer's current-ACL check.
@@ -212,6 +212,12 @@ def validate_ast(ast, *, expected_template_id, document_type, knowledge_scope,
                     block_index >= len(sections[index]["blocks"]) or
                     sections[index]["blocks"][block_index] != original_block):
                 raise InvalidAst("Unknown block must be preserved read-only")
+    if old_ast is not None:
+        for collection in ("claims", "citations"):
+            if collection == "citations" and controlled_citation:
+                continue
+            if document.get(collection) != original_document.get(collection):
+                raise InvalidAst("Claim and citation bindings require a controlled command")
     for collection in ("claims", "citations"):
         ids = set()
         for value in _array(document.get(collection), 2048):

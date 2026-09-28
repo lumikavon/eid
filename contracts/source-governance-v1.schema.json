@@ -1,0 +1,10 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://eid.local/contracts/source-governance-v1.schema.json",
+  "title":"Source governance v1 (current access required on every read)",
+  "$defs":{
+    "authority":{"type":"integer","minimum":1,"maximum":8,"description":"1 law, 2 company, 3 project, 4 product, 5 approved history, 6 department, 7 internal, 8 allowed external. 9 LLM general is not Evidence."},
+    "side":{"oneOf":[{"type":"object","additionalProperties":false,"required":["state"],"properties":{"state":{"const":"forbidden"}}},{"type":"object","required":["state","id","source_id","version","chunk_hash","locator","statement","authority"],"properties":{"state":{"const":"current"},"authority":{"$ref":"#/$defs/authority"},"id":{"type":"string","format":"uuid"},"source_id":{"type":"string"},"version":{"type":"string"},"chunk_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"locator":{"type":"string"},"statement":{"type":"string"},"value":{"type":"string"},"unit":{"type":"string"},"conditions":{"type":"string"}}}]}
+  },
+  "type":"object","required":["data"],"properties":{"data":{"type":"object","required":["id","revision","status","sides","history"],"properties":{"id":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":1},"status":{"enum":["open","accepted_left","accepted_right","unresolved","forbidden"]},"sides":{"type":"array","minItems":2,"maxItems":2,"items":{"$ref":"#/$defs/side"}},"history":{"type":"array","maxItems":30,"items":{"type":"object","required":["revision","status","reason","actor_id","decided_at"]}}}}}
+}

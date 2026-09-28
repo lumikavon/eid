@@ -7,12 +7,12 @@ x-runtime-environment: &runtime
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0015_outline_confirmation
+  EID_REQUIRED_SCHEMA_REVISION: 0019_section_evidence
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
     labels: &ownership {io.eid.owner: "${EID_OWNER_NONCE:?Run the isolation bootstrap first}"}
-    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+    image: pgvector/pgvector:0.8.6-pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
     environment: {POSTGRES_DB: eid_local_dev, POSTGRES_USER: postgres, POSTGRES_PASSWORD: local-postgres-admin-only}
     ports: ["127.0.0.1:55432:5432"]
     volumes: ["eid-postgres:/var/lib/postgresql/data", "./postgres/001-isolated-database.sql:/docker-entrypoint-initdb.d/001-isolated-database.sql:ro"]
@@ -82,6 +82,11 @@ services:
       EID_KEYCLOAK_MONITOR_CLIENT_ID: eid-readiness-monitor
       EID_KEYCLOAK_MONITOR_CLIENT_SECRET: local-keycloak-readiness-monitor-only
       EID_DISCOVERY_POLICY_ENVIRONMENT: isolated_development
+      EID_BGE_M3_ENDPOINT: ${EID_BGE_M3_ENDPOINT:-}
+      EID_RERANKER_ENDPOINT: ${EID_RERANKER_ENDPOINT:-}
+      EID_KNOWLEDGE_GATEWAY_URL: ${EID_KNOWLEDGE_GATEWAY_URL:-}
+      EID_KNOWLEDGE_GATEWAY_KEY: ${EID_KNOWLEDGE_GATEWAY_KEY:-}
+      EID_EVIDENCE_WAKE_KEY: ${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}
     depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_healthy}, redis: {condition: service_healthy}, seaweedfs: {condition: service_started}, keycloak: {condition: service_healthy}}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]
@@ -98,13 +103,20 @@ services:
       context: ..
       dockerfile: deployment/python.Dockerfile
       args: {EID_SOURCE_FINGERPRINT: "${EID_WORKER_SOURCE_FINGERPRINT:?Capture source fingerprints before build}"}
-    command: ["python", "-m", "edw_worker", "worker", "--loglevel=INFO", "--queues=generation,retrieval,review,integration", "--concurrency=1"]
+    command: ["python", "-m", "edw_worker", "worker", "--loglevel=INFO", "--queues=generation,retrieval,review,parse_ocr,integration", "--concurrency=1"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=67108864,mode=1777
+    security_opt:
+      - no-new-privileges:true
     environment:
       <<: *runtime
       EID_DATABASE_URL: postgresql://eid_worker:local-worker-only@postgres:5432/eid_local_dev
       EID_RABBITMQ_URL: amqp://eid_worker:local-worker-only@rabbitmq:5672/eid-local
       EID_S3_ACCESS_KEY: eid-s3-worker
       EID_S3_SECRET_KEY: local-s3-worker-read-only
+      EID_EVIDENCE_WAKE_KEY: ${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}
+      EID_BGE_M3_ENDPOINT: ${EID_BGE_M3_ENDPOINT:-}
     depends_on: {api: {condition: service_started}}
     healthcheck:
       test: ["CMD", "python", "-m", "edw_worker.health"]
@@ -125,8 +137,8 @@ services:
       <<: *runtime
       EID_DATABASE_URL: postgresql://eid_worker:local-worker-only@postgres:5432/eid_local_dev
       EID_RABBITMQ_URL: amqp://eid_worker:local-worker-only@rabbitmq:5672/eid-local
-      EID_S3_ACCESS_KEY: eid-s3-worker
-      EID_S3_SECRET_KEY: local-s3-worker-read-only
+      EID_S3_ACCESS_KEY: eid-s3-cleaner
+      EID_S3_SECRET_KEY: local-s3-cleaner-write-only
     depends_on: {api: {condition: service_started}}
   web:
     labels: *ownership

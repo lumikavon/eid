@@ -12,6 +12,9 @@ from celery.worker.control import Panel
 from kombu import Exchange, Queue
 from botocore.config import Config
 from .inventory import register as register_inventory
+from .attachments import register as register_attachments
+from .knowledge import register as register_knowledge
+from .evidence import register as register_evidence
 
 broker = os.environ["EID_RABBITMQ_URL"]
 app = Celery("edw_worker", broker=broker)
@@ -33,6 +36,9 @@ app.conf.update(
     worker_prefetch_multiplier=1,
 )
 register_inventory(app)
+register_attachments(app)
+register_knowledge(app)
+register_evidence(app)
 
 DEPENDENCY_PROBE_NAMES = ("postgres", "redis", "s3")
 DEPENDENCY_PROBE_CAPACITY = len(DEPENDENCY_PROBE_NAMES) * 2
@@ -92,6 +98,14 @@ def _database_probe(operation_timeout: float) -> None:
              AND NOT has_table_privilege(current_user,'task_notification','UPDATE')
              AND NOT has_table_privilege(current_user,'task_observation_binding','SELECT')
              AND NOT has_table_privilege(current_user,'task_event','SELECT')
+             AND has_function_privilege(current_user,'eid_search_pending_v1(boolean,boolean)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_search_index_v1(uuid,integer,integer,text,text,text,text)','EXECUTE')
+             AND NOT has_table_privilege(current_user,'attachment_search_index','SELECT')
+             AND has_function_privilege(current_user,'eid_attachment_pending_v1()','EXECUTE')
+             AND has_function_privilege(current_user,'eid_attachment_claim_v1(uuid,uuid)','EXECUTE')
+             AND has_function_privilege(current_user,'eid_attachment_finish_v1(uuid,uuid,text,jsonb,text)','EXECUTE')
+             AND NOT has_table_privilege(current_user,'attachment','SELECT')
+             AND NOT has_table_privilege(current_user,'attachment_page','INSERT')
              AND has_function_privilege(current_user,'eid_template_validation_pending_v1()','EXECUTE')
              AND has_function_privilege(current_user,'eid_template_validation_claim_v1(uuid,uuid)','EXECUTE')
              AND has_function_privilege(current_user,'eid_template_validation_finish_v1(uuid,uuid,jsonb,text)','EXECUTE')
@@ -100,6 +114,8 @@ def _database_probe(operation_timeout: float) -> None:
              AND NOT has_table_privilege(current_user,'template_version','SELECT')
              AND NOT has_table_privilege(current_user,'document_version','SELECT')
              AND NOT has_table_privilege(current_user,'document_outline_version','SELECT')
+             AND NOT has_table_privilege(current_user,'section_evidence_pack','SELECT')
+             AND NOT has_table_privilege(current_user,'section_evidence_job','UPDATE')
              AND NOT has_table_privilege(current_user,'document','INSERT')
              AND NOT has_function_privilege(current_user,
                  'eid_notification_mark_read_v1(uuid,uuid)','EXECUTE')
@@ -116,7 +132,7 @@ def _database_probe(operation_timeout: float) -> None:
             raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0015_outline_confirmation")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0019_section_evidence")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:

@@ -83,6 +83,89 @@ class InventoryResult(Contract):
     policy_epoch: tuple[SafeInteger, SafeInteger, SafeInteger]
 
 
+class KnowledgeSearchInput(Contract):
+    """Versioned bounded search input; source IDs are never supplied as authority."""
+    query: Annotated[str, Field(min_length=2, max_length=128, pattern=r'^[^\x00-\x1f]+$')]
+    context_document_id: UUID
+    context_version_id: UUID | None = None
+    source_sha256: Digest | None = None
+    classification: Annotated[int, Field(ge=0, le=3)] | None = None
+    category: Literal['all', 'attachment', 'enterprise', 'golden'] = 'all'
+    limit: Annotated[int, Field(ge=1, le=20)] = 10
+
+
+class SectionEvidenceInput(Contract):
+    section_id: UUID
+    outline_version_id: UUID
+    context_version_id: UUID
+    document_version_id: UUID
+    document_revision: Annotated[int, Field(strict=True, ge=1)]
+    request_key: UUID
+
+
+class SourceRegistration(Contract):
+    context_document_id: UUID
+    context_version_id: UUID | None = None
+    chain: Literal['attachment', 'enterprise']
+    source_id: Annotated[str, Field(min_length=1, max_length=128)]
+    document_id: UUID | None = None
+    version: Annotated[str, Field(min_length=1, max_length=128)]
+    chunk_hash: Digest
+    locator: Annotated[str, Field(min_length=1, max_length=512)]
+    page: Annotated[int, Field(ge=1, le=500)] | None = None
+    ordinal: Annotated[int, Field(ge=1, le=200)] | None = None
+    authority: Annotated[int, Field(strict=True, ge=1, le=8)]
+    classification: Annotated[int, Field(strict=True, ge=0, le=3)]
+    project_id: Annotated[str, Field(min_length=1, max_length=256)]
+    product_id: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    customer_id: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    effective_from: datetime
+    effective_until: datetime | None = None
+    topic: Annotated[str, Field(min_length=1, max_length=256)]
+    statement: Annotated[str, Field(min_length=1, max_length=4000)]
+    value: Annotated[str, Field(min_length=1, max_length=256)]
+    unit: Annotated[str, Field(max_length=64)] = ''
+    conditions: Annotated[str, Field(max_length=512)] = ''
+
+    @model_validator(mode='after')
+    def bindings(self):
+        if ((self.chain == 'attachment') != (self.document_id is not None and self.page is not None and self.ordinal is not None)):
+            raise ValueError('Source locator mismatch')
+        if self.chain == 'enterprise' and (self.page is not None or self.ordinal is not None):
+            raise ValueError('Enterprise locator mismatch')
+        if self.effective_from.tzinfo is None or (self.effective_until is not None and
+                (self.effective_until.tzinfo is None or self.effective_until <= self.effective_from)):
+            raise ValueError('Invalid effective interval')
+        return self
+
+
+class ConflictDecision(Contract):
+    context_document_id: UUID
+    context_version_id: UUID | None = None
+    expected_revision: Annotated[int, Field(strict=True, ge=1)]
+    left_id: UUID
+    right_id: UUID
+    status: Literal['accepted_left', 'accepted_right', 'unresolved']
+    reason: Annotated[str, Field(min_length=3, max_length=2000)]
+
+    @field_validator('reason')
+    @classmethod
+    def reason_required(cls, value):
+        if len(value.strip()) < 3:
+            raise ValueError('Reason required')
+        return value
+
+
+class AttachmentJobSnapshot(Contract):
+    id: UUID
+    document_id: UUID
+    state: Literal["QUEUED", "RUNNING", "PARTIAL", "SUCCEEDED", "FAILED", "BLOCKED"]
+    error_code: Annotated[str, Field(pattern=r"^[A-Z_]{1,64}$")] | None
+    attempt: Annotated[int, Field(strict=True, ge=0, le=3)]
+    created_at: datetime
+    updated_at: datetime
+
+
 class TaskSnapshot(Contract):
     task_id: UUID
     state: Literal["QUEUED", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "BLOCKED", "FAILED",
@@ -223,7 +306,7 @@ def wire_time(value: datetime) -> str:
 
 
 def contract_schema():
-    schema = TypeAdapter(SubmitTask | TaskEnvelope | TaskResponse | ResultResponse |
+    schema = TypeAdapter(AttachmentJobSnapshot | SubmitTask | TaskEnvelope | TaskResponse | ResultResponse |
                          TaskPage | EventPage | NotificationPage | NotificationResponse |
                          NotificationUnreadResponse).json_schema()
     return {"$schema": "https://json-schema.org/draft/2020-12/schema",
