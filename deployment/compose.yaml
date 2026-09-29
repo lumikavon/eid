@@ -8,7 +8,7 @@ x-runtime-environment: &runtime
   EID_OIDC_JWKS_URL: http://keycloak:8080/realms/eid-local/protocol/openid-connect/certs
   EID_WORKER_NODE_NAME: eid-worker@worker
   EID_ENVIRONMENT_MARKER: eid-local-dev-v1
-  EID_REQUIRED_SCHEMA_REVISION: 0021_epic3_remediation
+  EID_REQUIRED_SCHEMA_REVISION: 0022_model_governance
   EID_WORKER_HEALTH_TIMEOUT_SECONDS: "2"
 services:
   postgres:
@@ -90,6 +90,12 @@ services:
       EID_KNOWLEDGE_GATEWAY_URL: ${EID_KNOWLEDGE_GATEWAY_URL:-}
       EID_KNOWLEDGE_GATEWAY_KEY: ${EID_KNOWLEDGE_GATEWAY_KEY:-}
       EID_EVIDENCE_WAKE_KEY: ${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}
+      EID_MODEL_WAKE_KEY: ${EID_MODEL_WAKE_KEY:?Set a unique 32+ character model wake key}
+      EID_MODEL_INTERNAL_ENDPOINT: ${EID_MODEL_INTERNAL_ENDPOINT:-}
+      EID_MODEL_INTERNAL_KEY: ${EID_MODEL_INTERNAL_KEY:-}
+      EID_MODEL_EXTERNAL_ENDPOINT: ${EID_MODEL_EXTERNAL_ENDPOINT:-}
+      EID_MODEL_EXTERNAL_KEY: ${EID_MODEL_EXTERNAL_KEY:-}
+      EID_MODEL_EXTERNAL_APPROVED_HOST: ${EID_MODEL_EXTERNAL_APPROVED_HOST:-}
     depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_healthy}, redis: {condition: service_healthy}, seaweedfs: {condition: service_started}, keycloak: {condition: service_healthy}}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]
@@ -121,6 +127,7 @@ services:
       EID_ATTACHMENT_ACCESS_KEY: eid-s3-attachment-worker
       EID_ATTACHMENT_SECRET_KEY: local-s3-attachment-worker-only
       EID_EVIDENCE_WAKE_KEY: ${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}
+      EID_MODEL_WAKE_KEY: ${EID_MODEL_WAKE_KEY:?Set a unique 32+ character model wake key}
       EID_BGE_M3_ENDPOINT: ${EID_BGE_M3_ENDPOINT:-}
     depends_on: {api: {condition: service_started}}
     healthcheck:

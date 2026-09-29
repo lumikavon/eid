@@ -79,7 +79,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-28-2026 06:03"
+last_updated: "09-28-2026 11:19"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -116,8 +116,8 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md
-  epic-4: backlog
-  4-1-safe-model-routing: backlog
+  epic-4: in-progress
+  4-1-safe-model-routing: review # 软件实现候审；测试、迁移、DB、服务、浏览器、真实模型与运行验收 not-run
   4-2-section-generation: backlog
   4-3-copilot-operations: backlog
   4-4-reviewed-patches: backlog

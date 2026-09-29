@@ -137,6 +137,15 @@ def dispatch_attachments():
                       retry=False, ignore_result=True)
 
 
+def dispatch_models():
+    from .app import app
+    with connection() as conn:
+        identifiers = conn.execute('SELECT workspace_id,document_id,run_id FROM eid_model_pending_v1()').fetchall()
+    for workspace_id, document_id, run_id in identifiers:
+        app.send_task('eid.model.wake.v1', args=[str(workspace_id), str(document_id), str(run_id)],
+                      queue='generation', expires=120, retry=False, ignore_result=True)
+
+
 def scheduler_main():
     from .log_safety import register_worker_log_safety
     register_worker_log_safety()
@@ -148,6 +157,7 @@ def scheduler_main():
         try:
             progressed = scheduler_once(owner)
             dispatch_attachments()
+            dispatch_models()
             if time.monotonic() - last_index >= 10:
                 last_index = time.monotonic()
                 from .app import app

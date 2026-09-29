@@ -34,6 +34,7 @@ from .attachments.routes import create_router as create_attachment_router
 from .knowledge.routes import create_router as create_knowledge_router
 from .knowledge.governance_routes import create_router as create_knowledge_governance_router
 from .knowledge.evidence_routes import create_router as create_evidence_router
+from .model_gateway.routes import create_router as create_model_router
 from .documents.context_routes import create_router as create_context_router
 from .documents.outline_routes import create_router as create_outline_router
 from .documents.governance_routes import create_router as create_governance_router
@@ -59,6 +60,7 @@ app.include_router(create_attachment_router(settings, lambda token: verifier.ver
 app.include_router(create_knowledge_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_knowledge_governance_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_evidence_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_model_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_context_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_outline_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))
@@ -271,7 +273,10 @@ def _postgres_status() -> str:
                            ('template_governance_action_receipt','SELECT'),
                            ('template_governance_action_receipt','INSERT'),
                            ('template','INSERT'), ('template_version','INSERT'),
-                           ('template_version_state','INSERT'), ('template_workspace','INSERT')
+                           ('template_version_state','INSERT'), ('template_workspace','INSERT'),
+                           ('model_policy_version','SELECT'), ('model_policy_version','INSERT'),
+                           ('model_policy_active','SELECT'), ('model_policy_active','INSERT'),
+                           ('model_generation_run','SELECT'), ('model_generation_run','INSERT')
                 ), resolved AS (
                     SELECT to_regclass(format('%I.%I', current_schema(), name)) AS table_oid,
                            privilege
@@ -282,6 +287,20 @@ def _postgres_status() -> str:
                     AND CASE WHEN table_oid IS NULL THEN FALSE
                              ELSE has_table_privilege(current_user, table_oid, privilege) END
                 )
+                AND has_column_privilege(current_user,'model_policy_active','version_id','UPDATE')
+                AND has_column_privilege(current_user,'model_policy_active','revision','UPDATE')
+                AND (SELECT bool_and(has_column_privilege(current_user,'model_generation_run',
+                    column_name,'UPDATE')) FROM (VALUES ('state'),('stage'),('attempt'),
+                    ('repair_count'),('fence'),('lease_until'),('next_retry_at'),('next_wake_at'),
+                    ('error_code'),('output'),('output_sha256'),('usage'),('safe_input'),
+                    ('updated_at')) AS model_update_columns(column_name))
+                AND NOT has_table_privilege(current_user,'model_policy_version','UPDATE')
+                AND NOT has_table_privilege(current_user,'model_generation_run','DELETE')
+                AND NOT has_table_privilege('eid_worker','model_generation_run','SELECT')
+                AND NOT has_table_privilege('eid_worker','model_policy_version','SELECT')
+                AND NOT has_table_privilege('eid_worker','model_policy_active','SELECT')
+                AND has_function_privilege('eid_worker','eid_model_pending_v1()','EXECUTE')
+                AND NOT has_function_privilege(current_user,'eid_model_pending_v1()','EXECUTE')
                 AND has_column_privilege(current_user,'discovery_record','visibility','UPDATE')
                 AND has_column_privilege(current_user,'discovery_record','revision','UPDATE')
                 AND has_column_privilege(current_user,'discovery_record','updated_at','UPDATE')
