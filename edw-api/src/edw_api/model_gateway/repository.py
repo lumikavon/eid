@@ -145,6 +145,9 @@ def reserve(conn, subject, workspace_id, document_id, command: GenerateInput, re
     budget = conn.execute('''SELECT coalesce(sum(reserved_tokens),0) AS reserved
         FROM model_generation_run WHERE workspace_id=%s
         AND created_at>=date_trunc('day',clock_timestamp())''', (workspace_id,)).fetchone()['reserved']
+    budget += conn.execute('''SELECT coalesce(sum(reserved_tokens),0) AS reserved
+        FROM section_generation_job WHERE workspace_id=%s
+        AND created_at>=date_trunc('day',clock_timestamp())''', (workspace_id,)).fetchone()['reserved']
     if estimate + budget > policy.daily_token_budget:
         raise ApiError(429, 'MODEL_QUOTA_EXCEEDED', '模型额度不足')
     row = conn.execute('''INSERT INTO model_generation_run(id,workspace_id,document_id,actor_id,subject,

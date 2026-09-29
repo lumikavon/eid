@@ -118,6 +118,9 @@ def _database_probe(operation_timeout: float) -> None:
              AND NOT has_table_privilege(current_user,'document_outline_version','SELECT')
              AND has_function_privilege(current_user,'eid_model_pending_v1()','EXECUTE')
              AND NOT has_table_privilege(current_user,'model_generation_run','SELECT')
+             AND NOT has_table_privilege(current_user,'section_generation_job','SELECT')
+             AND NOT has_table_privilege(current_user,'copilot_run','SELECT')
+             AND has_function_privilege(current_user,'eid_section_generation_pending_v1()','EXECUTE')
              AND NOT has_table_privilege(current_user,'model_policy_version','SELECT')
              AND NOT has_table_privilege(current_user,'model_policy_active','SELECT')
              AND NOT has_table_privilege(current_user,'section_evidence_pack','SELECT')
@@ -138,7 +141,7 @@ def _database_probe(operation_timeout: float) -> None:
             raise RuntimeError("Worker task privileges do not match")
     marker = marker_row[0] if marker_row else None
     expected_marker = os.getenv("EID_ENVIRONMENT_MARKER", "eid-local-dev-v1")
-    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0022_model_governance")
+    expected_revision = os.getenv("EID_REQUIRED_SCHEMA_REVISION", "0024_copilot_run")
     if marker != expected_marker:
         raise RuntimeError("Worker database environment marker does not match")
     if revision_rows != [(expected_revision,)]:

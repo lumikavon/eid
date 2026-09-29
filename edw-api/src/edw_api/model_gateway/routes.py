@@ -69,8 +69,11 @@ def _run(settings, workspace_id, document_id, run_id):
             if decision.route != job['route']:
                 raise AccessDenied()
             endpoint_for(settings, decision.route)
+        from .copilot_routes import attest_run, fenced_run
+        attest_run(settings, workspace_id, document_id, run_id)
         # Never keep a database transaction open during a model request.
         output, usage, repairs = generate(settings, policy, decision)
+        attestation = attest_run(settings, workspace_id, document_id, run_id)
         with connection(settings) as conn:
             # Match access policy's workspace-first lock order before locking the head.
             conn.execute('SELECT workspace_id FROM access_workspace WHERE workspace_id=%s FOR SHARE',
@@ -101,6 +104,8 @@ def _run(settings, workspace_id, document_id, run_id):
             if decide(PolicyDraft.model_validate({field: policy_row[field] for field in PolicyDraft.model_fields}),
                       command, auth.classification).route != row['route']:
                 raise AccessDenied()
+            if attestation:
+                fenced_run(conn, workspace_id, document_id, run_id, output, attestation[1])
             from ..task_contract import canonical
             digest = sha256(canonical(output)).hexdigest()
             audit(conn, row['actor_id'], workspace_id, run_id, 'model:run:completed', {},
@@ -116,6 +121,7 @@ def _run(settings, workspace_id, document_id, run_id):
             'MODEL_DOCUMENT_CHANGED', 'MODEL_SCOPE_UNCONFIRMED', 'MODEL_POLICY_DENIED',
             'MODEL_DLP_REJECTED', 'MODEL_CLASSIFICATION', 'MODEL_CONTEXT_LIMIT',
             'MODEL_ROUTE_MISSING', 'MODEL_REDACTION_REQUIRED', 'MODEL_REDACTION_INCOMPLETE',
+            'COPILOT_SCOPE_CHANGED', 'COPILOT_EVIDENCE_CHANGED',
         })
         retryable = not isinstance(exc, ApiError) or exc.retryable
         try:

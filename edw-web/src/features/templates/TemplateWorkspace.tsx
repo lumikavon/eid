@@ -4,6 +4,8 @@ import {useLocation,useNavigate} from 'react-router-dom';
 import type {WorkspaceAccess} from '../../app/access-api';
 import {createDocument,getDocument,getTemplateDetail,getTemplates,getTypeCatalog,TemplateError,templateScopes,type CreateDocument,type DocumentType,type TemplateCard,type TemplateFilters,type TemplateScope} from './template-api';
 import DomainEditor from './DomainEditor';
+import SectionGeneration from './SectionGeneration';
+import CopilotPanel from './CopilotPanel';
 import TemplateGovernance from './TemplateGovernance';
 import './templates.css';
 
@@ -29,6 +31,8 @@ function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigatio
  return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>backRef.current()}>返回项目文档</button></header>
   {blocked||fatal?<div className="template-state" role="alert"><p>{errorText(fatal??document.error??new Error('当前权限已变化，请重新读取'))}</p><button className="btn" onClick={()=>{setBlocked(false);void document.refetch()}}>重新读取</button></div>:document.isFetching||document.isPending?<p className="template-state" role="status">正在读取当前授权文档…</p>:document.error?<div className="template-state" role="alert"><p>{errorText(document.error)}</p><button className="btn" onClick={()=>void document.refetch()}>重新读取</button></div>:null}
   {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
+  {value&&<SectionGeneration key={value.version_id} current={current} document={value} onReject={onReject}/>}
+  {value&&<CopilotPanel key={`copilot:${value.version_id}`} current={current} document={value}/>}
  </div>;
 }
 function CatalogView({current,onReject,onRefresh}:Props){

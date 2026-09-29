@@ -45,7 +45,7 @@ def endpoint_for(settings, route):
     return endpoint, key
 
 
-def generate(settings, policy, decision):
+def generate(settings, policy, decision, *, schema=Proposal):
     endpoint, key = endpoint_for(settings, decision.route)
     body = {'model': policy.model_id, 'prompt': PROMPT, 'input': decision.safe_input,
             'max_output_tokens': policy.max_output_tokens}
@@ -79,7 +79,7 @@ def generate(settings, policy, decision):
                     or usage['output_tokens'] > policy.max_output_tokens
                     or usage['cost_micros'] > policy.max_cost_micros):
                 raise ApiError(422, 'MODEL_BUDGET_EXCEEDED', '模型用量超出预算')
-            result = Proposal.model_validate(raw['output'])
+            result = schema.model_validate(raw['output'])
             return result.model_dump(), usage, repair_count
         except httpx.HTTPError as exc:
             raise ApiError(503, 'MODEL_PROVIDER_UNAVAILABLE', '模型服务不可用', retryable=True) from exc

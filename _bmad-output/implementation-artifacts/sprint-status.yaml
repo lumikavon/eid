@@ -118,8 +118,8 @@ development_status:
   # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md
   epic-4: in-progress
   4-1-safe-model-routing: review # 软件实现候审；测试、迁移、DB、服务、浏览器、真实模型与运行验收 not-run
-  4-2-section-generation: backlog
-  4-3-copilot-operations: backlog
+  4-2-section-generation: review # 严格证据复述章节提案候审；测试、迁移、服务与运行验收 not-run
+  4-3-copilot-operations: review # 源码候审；结构化图形留 4.5，人工接受留 4.4；测试/迁移/真实运行验收 not-run
   4-4-reviewed-patches: backlog
   4-5-pending-safe-graphics: backlog
   epic-4-retrospective: optional

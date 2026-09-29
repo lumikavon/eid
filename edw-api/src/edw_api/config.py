@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     keycloak_admin_url: str = "http://keycloak:8080"
     keycloak_monitor_client_id: str = "eid-readiness-monitor"
     keycloak_monitor_client_secret: str = "local-keycloak-readiness-monitor-only"
-    required_schema_revision: str = "0022_model_governance"
+    required_schema_revision: str = "0024_copilot_run"
     model_internal_endpoint: str = ""
     model_internal_key: str = ""
     model_external_endpoint: str = ""

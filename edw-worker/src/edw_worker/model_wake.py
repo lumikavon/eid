@@ -29,3 +29,20 @@ def register(app):
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning('model_wake_unavailable error_type=%s', type(exc).__name__)
             raise wake.retry(countdown=10) from None
+
+    @app.task(name='eid.section.wake.v1', queue='generation', ignore_result=True, max_retries=2)
+    def wake_section(workspace_id, document_id, run_id):
+        key = os.getenv('EID_MODEL_WAKE_KEY', '')
+        if len(key) < 32:
+            return
+        try:
+            workspace, document, run = (UUID(value) for value in (workspace_id, document_id, run_id))
+            timestamp = str(int(time.time()))
+            mac = hmac.new(key.encode(), f'{workspace}:{document}:{run}:{timestamp}'.encode('ascii'),
+                           hashlib.sha256).hexdigest()
+            url = f'http://api:8000/api/v1/workspaces/{workspace}/documents/{document}/generation/sections/{run}/wake'
+            with httpx.Client(timeout=3, trust_env=False, follow_redirects=False) as client:
+                client.post(url, headers={'X-Model-Time': timestamp, 'X-Model-Mac': mac}).raise_for_status()
+        except (ValueError, httpx.HTTPError) as exc:
+            logger.warning('section_wake_unavailable error_type=%s', type(exc).__name__)
+            raise wake_section.retry(countdown=10) from None

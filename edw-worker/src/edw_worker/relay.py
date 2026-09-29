@@ -144,6 +144,11 @@ def dispatch_models():
     for workspace_id, document_id, run_id in identifiers:
         app.send_task('eid.model.wake.v1', args=[str(workspace_id), str(document_id), str(run_id)],
                       queue='generation', expires=120, retry=False, ignore_result=True)
+    with connection() as conn:
+        sections = conn.execute('SELECT workspace_id,document_id,run_id FROM eid_section_generation_pending_v1()').fetchall()
+    for workspace_id, document_id, run_id in sections:
+        app.send_task('eid.section.wake.v1', args=[str(workspace_id), str(document_id), str(run_id)],
+                      queue='generation', expires=120, retry=False, ignore_result=True)
 
 
 def scheduler_main():
