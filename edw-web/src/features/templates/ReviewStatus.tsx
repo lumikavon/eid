@@ -62,6 +62,7 @@ export default function ReviewStatus({current,document,onNavigateToBlock,onDocum
  }catch(reason){setError(reason instanceof Error?reason.message:'审校请求未确认')}finally{setBusy(false)}};
  return <section className="template-state review-inspection" aria-label="版本审校"><h2>版本审校</h2>
   <p>当前文档版本 {document.revision} · 审校完成不代表批准或发布</p>
+   {document.document_type==='technical_solution'&&<p>技术方案待确认项位于「结果」的事实、技术和一致性问题中；可按章节定位区块，在「追溯」核对当前授权引用。标准编号匹配与本地规则通过均不构成标准适用性核验。</p>}
   <button className="btn" disabled={busy||!current.operations.includes('document:review')} onClick={()=>void start()}>{busy?'正在提交…':'重新审校当前版本'}</button>
   {error&&<p role="alert">{error}</p>}
   <label>选择审校运行<select value={runId} onChange={event=>{setSelected('');setOffset(0);setRunId(event.target.value)}}><option value="">无审校运行</option>{runs.map(item=><option key={item.id} value={item.id}>版本 {item.document_revision} · {item.state} · {item.id}</option>)}</select></label>

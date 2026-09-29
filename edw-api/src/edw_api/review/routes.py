@@ -18,6 +18,7 @@ from ..db import connection
 from ..documents.domain import content_hash
 from ..documents.editor_repository import read_version
 from ..documents.context_repository import _head as context_head
+from ..documents.outline_repository import _template_sections
 from ..errors import ApiError
 from ..model_gateway.repository import audit
 from ..model_gateway.patch_routes import Decision as PatchDecision, selected as selected_patches
@@ -107,14 +108,19 @@ def snapshot(conn, subject, workspace_id, document_id, version_id, ast):
         FROM document_claim WHERE workspace_id=%s AND document_id=%s AND document_version_id=%s ORDER BY id''',
         (workspace_id, document_id, version_id)).fetchall()
     citations = citation_rows(conn, workspace_id, document_id, version_id)
+    policy = _template_sections(conn, ast['document']['metadata']['template_version_id'])
+    structure = {**template['structure'], 'policy_sections': policy}
     context = context_head(conn, document_id)
     facts = []
+    context_confirmed = False
     if context and context['document_version_id'] == version_id:
         from ..documents.context_repository import _snapshot, _sources
         context_value = _snapshot(context)
         _sources(conn, subject, workspace_id, context_value)
         facts = context_value.model_dump(mode='json')['facts']
-    return template['structure'], claims, facts, citations
+        context_confirmed = context['confirmed_at'] is not None and context['ready_at_confirmation'] is True
+    structure['context_confirmed'] = context_confirmed
+    return structure, claims, facts, citations
 
 
 def source_snapshot(citations):
@@ -438,8 +444,6 @@ def execute(settings, workspace_id, document_id, run_id):
             if (content_hash(structure) != row['template_hash'] or
                     input_hash(claims, facts, citations) != row['input_hash']):
                 raise ApiError(409, 'REVIEW_TEMPLATE_CHANGED', '模板已变化')
-            outcomes, issues = inspect(head['ast'], structure, claims, project_facts=facts,
-                                       stale_sources=[c for c in citations if c['needs_review']])
             if row['rule_version'] != RULE_VERSION:
                 raise ApiError(409, 'REVIEW_RULE_CHANGED', '审校规则版本已变化')
         with connection(settings) as conn:
@@ -464,12 +468,14 @@ def execute(settings, workspace_id, document_id, run_id):
             try:
                 source_safe(conn, workspace_id, anchor, job['subject'], fresh_citations)
                 sources_current = True
+                outcomes, issues = inspect(head['ast'], fresh_structure, fresh_claims,
+                    project_facts=fresh_facts, citations=fresh_citations)
             except ApiError as exc:
                 if exc.code != 'REVIEW_SOURCE_CHANGED':
                     raise
                 sources_current = False
                 outcomes, issues = inspect(head['ast'], fresh_structure, fresh_claims,
-                    project_facts=fresh_facts, stale_sources=fresh_citations)
+                    project_facts=fresh_facts, citations=(), stale_sources=fresh_citations)
                 for outcome in outcomes:
                     if outcome['category'] == 'fact':
                         outcome['state'] = 'UNEVALUATED'

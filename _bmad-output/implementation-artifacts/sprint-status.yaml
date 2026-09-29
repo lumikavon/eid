@@ -129,7 +129,7 @@ development_status:
   5-1-pinned-reviewers: review # 软件实现/编译/typecheck 完成；测试、迁移、真实模型与运行验收 not-run，独立质量门禁未执行
   5-2-review-inspection: review # 源码与离线编译/typecheck 完成；测试、迁移、服务及浏览器 not-run
   5-3-issue-disposition: review # 静态/编译/typecheck 完成；测试、迁移、服务与浏览器 not-run
-  5-4-technical-solution: backlog
+  5-4-technical-solution: review # 本地规则与来源约束源码完成；测试、实际企业标准核验和服务 not-run
   5-5-prd-composition: backlog
   5-6-test-traceability: backlog
   5-7-measurable-requirements: backlog
