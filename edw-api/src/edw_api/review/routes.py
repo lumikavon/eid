@@ -7,7 +7,7 @@ import json
 import time
 
 import psycopg
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg.types.json import Jsonb
 
@@ -16,6 +16,7 @@ from ..access.repository import checked
 from ..auth import bearer_token
 from ..db import connection
 from ..documents.domain import content_hash
+from ..documents.editor_repository import read_version
 from ..documents.context_repository import _head as context_head
 from ..errors import ApiError
 from ..model_gateway.repository import audit
@@ -155,6 +156,90 @@ def current_results(conn, row):
                 and all(item['state'] == 'COMPLETED' and item['rule_version'] == row['rule_version']
                         and item['model_version'] == row['model_version'] for item in results))
     return results, complete
+
+
+def issue_filters(severity, section_id, status, keyword):
+    """Only persisted open findings exist until human dispositions are introduced."""
+    if severity and severity not in ('critical', 'high', 'medium', 'low'):
+        raise ApiError(422, 'REVIEW_FILTER_INVALID', '无效严重级别')
+    if status and status != 'OPEN':
+        raise ApiError(422, 'REVIEW_FILTER_INVALID', '当前仅支持未处理状态')
+    return severity, section_id, status, keyword.strip() or None if keyword else None
+
+
+def filtered_issues(conn, run_id, filters, *, sources_current, offset=0, limit=100):
+    severity, section_id, _status, keyword = filters
+    # The keyword predicate must use exactly the same safe fields as issue_view.
+    # Source-linked quotes are excluded here; their authorization is checked per issue later.
+    condition = '''run_id=%s AND (%s::text IS NULL OR severity=%s)
+        AND (%s::uuid IS NULL OR section_id=%s::uuid)
+        AND (%s::text IS NULL OR ((%s::boolean AND source_id IS NULL AND quote ILIKE '%%' || %s || '%%')
+             OR impact ILIKE '%%' || %s || '%%' OR suggestion ILIKE '%%' || %s || '%%'
+             OR rule_id ILIKE '%%' || %s || '%%'))'''
+    params = (run_id, severity, severity, section_id, section_id,
+              keyword, sources_current, keyword, keyword, keyword, keyword)
+    count = conn.execute('SELECT count(*) AS count FROM review_issue WHERE ' + condition, params).fetchone()['count']
+    rows = conn.execute('SELECT * FROM review_issue WHERE ' + condition +
+                        ' ORDER BY created_at,id LIMIT %s OFFSET %s', (*params, limit, offset)).fetchall()
+    return rows, count
+
+
+def issue_view(issue, ast, *, sources_current, citations=()):
+    sections = ast['document']['sections']
+    section = next((item for item in sections if item['id'] == str(issue['section_id'])), None)
+    block = next((item for item in section['blocks'] if item['id'] == str(issue['block_id'])), None) if section else None
+    authorized_source = sources_current and (not issue['source_id'] or any(
+        str(citation['source_id']) == str(issue['source_id']) and citation['section_id'] == issue['section_id']
+        and citation['block_id'] == issue['block_id'] for citation in citations))
+    result = {key: issue[key] for key in ('id', 'category', 'rule_id', 'severity', 'section_id',
+              'block_id', 'claim_id', 'impact', 'suggestion')}
+    result.update(status='OPEN', section_title=section['title'] if section else None,
+                  block_type=block['type'] if block else None,
+                  quote=issue['quote'] if authorized_source else '[来源需复核]',
+                  source_id=issue['source_id'] if authorized_source else None,
+                  source_state='current' if authorized_source else 'denied',
+                  details=issue['details'] if authorized_source else {})
+    result['trace'] = [{'source_id': citation['source_id'], 'version': citation['source_version'],
+                        'locator': citation['locator'], 'quoted_text': citation['quoted_text']}
+                       for citation in citations if authorized_source and issue['source_id']
+                       and str(citation['source_id']) == str(issue['source_id'])
+                       and citation['section_id'] == issue['section_id']
+                       and citation['block_id'] == issue['block_id']]
+    return result
+
+
+def inspection(conn, row, head, subject, workspace_id, document_id):
+    version = read_version(conn, subject, workspace_id, document_id, row['document_version_id'])
+    if version['content_hash'] != row['content_hash'] or version['revision'] != row['document_revision']:
+        raise ApiError(409, 'REVIEW_VERSION_CHANGED', '审校版本已失效')
+    citations = citation_rows(conn, workspace_id, document_id, row['document_version_id'])
+    anchor = conn.execute('SELECT * FROM access_resource WHERE id=%s AND workspace_id=%s',
+                          (document_id, workspace_id)).fetchone()
+    try:
+        source_safe(conn, workspace_id, anchor, subject, citations)
+        sources_current = True
+    except ApiError as exc:
+        if exc.code != 'REVIEW_SOURCE_CHANGED':
+            raise
+        sources_current = False
+    # A stale run cannot rely on historical authorization, even when its citation bytes still match.
+    if row['document_version_id'] != head['head_version_id']:
+        sources_current = False
+    elif sources_current:
+        # Old citations on a new head are marked needs_review by the editor; never treat that
+        # historical snapshot as current evidence.
+        sources_current = all(not citation['needs_review'] for citation in citations)
+    return version['ast'], sources_current, citations
+
+
+def version_comparison(pinned, current_ast):
+    def blocks(ast):
+        return {block['id']: (section['id'], block) for section in ast['document']['sections']
+                for block in section['blocks']}
+    before, after = blocks(pinned), blocks(current_ast)
+    return {'added_blocks': len(after.keys() - before.keys()),
+            'removed_blocks': len(before.keys() - after.keys()),
+            'changed_blocks': sum(before[key] != after[key] for key in before.keys() & after.keys())}
 
 
 def execute(settings, workspace_id, document_id, run_id):
@@ -334,8 +419,14 @@ def create_router(settings, verify):
             return {'data': {'items': items}}
 
     @router.get('/{run_id}')
-    def detail(workspace_id: UUID, document_id: UUID, run_id: UUID, response: Response, current_actor=Depends(actor)):
+    def detail(workspace_id: UUID, document_id: UUID, run_id: UUID, response: Response,
+               severity: str | None = Query(default=None, max_length=16),
+               section_id: UUID | None = None, status: str | None = Query(default=None, max_length=16),
+               keyword: str | None = Query(default=None, max_length=128),
+               offset: int = Query(default=0, ge=0, le=100000),
+               current_actor=Depends(actor)):
         response.headers['Cache-Control'] = 'no-store'
+        filters = issue_filters(severity, section_id, status, keyword)
         with database() as conn:
             _, auth, head = current(conn, current_actor.subject, workspace_id, document_id)
             row = conn.execute('SELECT * FROM review_run WHERE workspace_id=%s AND document_id=%s AND id=%s',
@@ -346,20 +437,42 @@ def create_router(settings, verify):
             payload = view(row, head)
             payload['current_eligible'] = accessible_result(conn, row, head, auth,
                 current_actor.subject, workspace_id, document_id, results)
-            try:
-                citations = citation_rows(conn, workspace_id, document_id, row['document_version_id'])
-                anchor = conn.execute('SELECT * FROM access_resource WHERE id=%s AND workspace_id=%s',
-                                      (document_id, workspace_id)).fetchone()
-                source_safe(conn, workspace_id, anchor, current_actor.subject, citations)
-                issues = conn.execute('SELECT * FROM review_issue WHERE run_id=%s ORDER BY created_at,id LIMIT 500',
-                                      (run_id,)).fetchall()
-            except ApiError:
-                issues = [{**dict(item), 'quote': '[来源需复核]', 'source_id': None, 'details': {}}
-                          for item in conn.execute('''SELECT * FROM review_issue WHERE run_id=%s
-                              AND rule_id='obsolete_citation' ORDER BY created_at,id LIMIT 500''',
-                              (run_id,)).fetchall()]
+            ast, sources_current, citations = inspection(conn, row, head, current_actor.subject, workspace_id, document_id)
+            issues, total = filtered_issues(conn, run_id, filters, sources_current=sources_current, offset=offset)
+            visible = [issue_view(item, ast, sources_current=sources_current, citations=citations) for item in issues]
+            # A ratio is defined only for this concrete, bounded result set's count, not a quality score.
             return {'data': {**payload, 'results': [dict(item) for item in results],
-                             'issues': [dict(item) for item in issues]}}
+                             'issues': visible, 'issue_count': total, 'returned_count': len(visible),
+                             'offset': offset, 'page_size': 100,
+                             'source_state': 'current' if sources_current else 'denied',
+                             'sections': [{'id': section['id'], 'title': section['title']}
+                                          for section in ast['document']['sections']],
+                             'metrics': {'issue_count': {'numerator': total, 'denominator': None,
+                                                         'state': 'count'},
+                                         'score': {'numerator': None, 'denominator': None,
+                                                   'state': 'unevaluated'},
+                                         'coverage': {'numerator': None, 'denominator': None,
+                                                      'state': 'unevaluated'}},
+                             'version': {'id': row['document_version_id'], 'revision': row['document_revision'],
+                                         'current_id': head['head_version_id'], 'current_revision': head['revision'],
+                                         'comparison': version_comparison(ast, head['ast'])}}}
+
+    @router.get('/{run_id}/issues/{issue_id}')
+    def issue_detail(workspace_id: UUID, document_id: UUID, run_id: UUID, issue_id: UUID,
+                     response: Response, current_actor=Depends(actor)):
+        response.headers['Cache-Control'] = 'no-store'
+        with database() as conn:
+            _, _, head = current(conn, current_actor.subject, workspace_id, document_id)
+            row = conn.execute('SELECT * FROM review_run WHERE workspace_id=%s AND document_id=%s AND id=%s',
+                               (workspace_id, document_id, run_id)).fetchone()
+            if not row:
+                raise ApiError(404, 'REVIEW_NOT_FOUND', '审校不存在或无权查看')
+            ast, sources_current, citations = inspection(conn, row, head, current_actor.subject, workspace_id, document_id)
+            issue = conn.execute('SELECT * FROM review_issue WHERE run_id=%s AND id=%s',
+                                 (run_id, issue_id)).fetchone()
+            if not issue:
+                raise ApiError(404, 'REVIEW_ISSUE_NOT_FOUND', '问题不存在或无权查看')
+            return {'data': issue_view(issue, ast, sources_current=sources_current, citations=citations)}
 
     @router.post('/{run_id}/wake')
     def wake(workspace_id: UUID, document_id: UUID, run_id: UUID,
