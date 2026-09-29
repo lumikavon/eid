@@ -81,3 +81,5 @@ context:
 - `python -m compileall -q edw-api/src/edw_api/model_gateway edw-api/src/edw_api/config.py edw-api/src/edw_api/main.py edw-worker/src/edw_worker/model_wake.py edw-worker/src/edw_worker/app.py edw-worker/src/edw_worker/relay.py migrations/versions/0022_model_governance.py tests/contract/test_model_gateway.py tests/security/test_model_policy.py tests/worker/test_model_retry.py`：退出码 0；仅 Python 编译，未执行测试或迁移。
 - `npm --prefix edw-web run typecheck`（脚本 `tsc -b`）：退出码 0；仅类型编译。
 - 测试套件、迁移 SQL、数据库权限、服务、浏览器、真实模型及 L/R/P 运行验收：`not-run`，不得解释为已通过。Story 状态 `review` 仅表示软件实现候审，不是质量门禁或功能验收结论。
+
+2026-09-29 Epic 4 跨 Story 源码复核模型执行栅栏、限额与 transport 边界；返修后全 API 与契约/安全测试源码 `compileall`、Web `typecheck`、`git diff --check` 退出码均为 0。运行测试、迁移、模型调用及真实验收仍 `not-run`。

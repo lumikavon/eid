@@ -174,7 +174,7 @@ class DocumentVersionSummary(StrictModel):
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     created_by: UUID
     created_at: datetime
-    source: Literal["template_create", "manual_edit"]
+    source: Literal["template_create", "manual_edit", "ai_patch"]
 
 
 class DocumentVersionList(StrictModel):

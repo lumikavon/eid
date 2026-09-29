@@ -171,6 +171,15 @@ def validate_ast(ast, *, expected_template_id, document_type, knowledge_scope,
             content = _object(block.get("content"))
             if kind in {"paragraph", "heading", "warning", "code", "diagram", "citation"}:
                 _runs(content)
+                if kind == "diagram" and ("svg" in content or old_ast is not None and
+                        not any(existing.get("id") == block_id for old in original_sections
+                                for existing in old.get("blocks", []))):
+                    from ..model_gateway.graphics import safe_mermaid
+                    try:
+                        if set(content) != {"text", "svg"} or safe_mermaid(content["text"]) != content["svg"]:
+                            raise InvalidAst("Invalid static diagram")
+                    except (ValueError, TypeError, KeyError) as exc:
+                        raise InvalidAst("Invalid static diagram") from exc
                 if kind in {"paragraph", "heading"} and content.get("align", "left") not in {"left", "center", "right", "justify"}:
                     raise InvalidAst("Invalid alignment")
                 if kind == "heading" and content.get("level") not in {1, 2, 3, 4, 5, 6}:

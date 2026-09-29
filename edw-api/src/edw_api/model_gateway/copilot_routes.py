@@ -15,7 +15,7 @@ from ..errors import ApiError
 from ..knowledge.evidence import pinned as evidence_pinned
 from ..knowledge.governance import local_source
 from ..task_contract import canonical
-from .copilot import CATALOG, interpret, resolve, result
+from .copilot import CATALOG, interpret, resolve, result, structured
 from .policy import GenerateInput
 from .repository import reserve
 from .repository import active, current_document
@@ -141,7 +141,9 @@ def fenced_run(conn, workspace_id, document_id, model_run_id, output, view):
             raise ApiError(409, 'COPILOT_EVIDENCE_CHANGED', '来源定位已变化')
         original = pack['content']['items'][source_ref - 1]
         if (original['source_id'] != source['source_id'] or original['chunk_hash'] != source['chunk_hash']
-                or original['locator'] != source['locator']):
+                or original['locator'] != source['locator']
+                or any(original.get(key) != source.get(key)
+                       for key in ('version', 'classification', 'excerpt'))):
             raise ApiError(409, 'COPILOT_EVIDENCE_CHANGED', '来源定位已变化')
         _, _, anchor, _, _ = evidence_pinned(
             conn, row['subject'], workspace_id, document_id, row['section_id'],
@@ -150,7 +152,8 @@ def fenced_run(conn, workspace_id, document_id, model_run_id, output, view):
                 source['chunk_hash'], source['locator'], source['classification'],
                 original['page'], original['ordinal'], row['subject']) != source['excerpt']:
             raise ApiError(409, 'COPILOT_EVIDENCE_CHANGED', '当前来源已变化')
-    proposal = interpret(row['operation'], target, digest, payload, source)
+    proposal = (structured(row['operation'], target, digest, payload, source)
+                if row['operation'] in ('table','mermaid') else interpret(row['operation'], target, digest, payload, source))
     if proposal.get('state') == 'BLOCKED_BY_MISSING_INFO':
         raise ApiError(422, 'COPILOT_OUTPUT_UNSUPPORTED', '当前操作缺少可用提案结构')
 
@@ -204,10 +207,8 @@ def create_router(settings, verify):
             config, target, digest = resolve(row['ast'], command.section_id, command.block_id,
                                              command.target_hash, command.operation)
             result(command.operation, target, digest, prompt=command.prompt)
-            if config.family == 'structured':
-                return {'data': {'state': 'BLOCKED_BY_MISSING_INFO', 'operation': command.operation,
-                    'family': config.family, 'target_hash': digest,
-                    'reason': 'VALIDATED_GRAPHIC_REQUIRED'}}
+            if command.operation == 'plantuml':
+                raise ApiError(422, 'GRAPH_UNSUPPORTED', 'PlantUML 未配置受支持的安全转换')
             outline = read_outline(conn, current.subject, workspace_id, document_id)
             if outline['state'] != 'OUTLINE_READY' or str(command.section_id) not in {s['id'] for s in outline['snapshot']['sections']}:
                 raise ApiError(409, 'COPILOT_SCOPE_CHANGED', '大纲或章节已变化')
@@ -243,9 +244,13 @@ def create_router(settings, verify):
             text = canonical({'operation': command.operation, 'target': target, 'input': command.prompt,
                               'pack_id': str(command.pack_id), 'view_hash': view['view_hash'],
                               'target_hash': digest,
-                              'output_contract': {'operation': command.operation, 'target_hash': digest,
-                                  'text': 'unverified proposal; human review required',
-                                  'source_ref': 'number from sources', 'quote': 'exact source text'},
+                               'output_contract': ({'operation': command.operation, 'target_hash': digest,
+                                   'rows': 'bounded array of rows and text cells' if command.operation=='table' else None,
+                                   'diagram': 'flowchart TD with plain nodes and arrows only' if command.operation=='mermaid' else None,
+                                   'source_ref': 'number from sources', 'quote': 'exact source text'}
+                                   if config.family=='structured' else {'operation': command.operation,
+                                   'target_hash': digest, 'text': 'unverified proposal; human review required',
+                                   'source_ref': 'number from sources', 'quote': 'exact source text'}),
                               'sources': [{'ref': item['ordinal'], 'text': item['excerpt'][:1500]}
                                           for item in view['items'] if item['ordinal'] <= 12]}).decode('utf-8')
             if len(text) > 32000:
@@ -337,7 +342,8 @@ def create_router(settings, verify):
                 source_ref = output.get('source_ref') if isinstance(output, dict) else None
                 source = next((dict(item, source_ref=source_ref) for item in view['items']
                     if type(source_ref) is int and item['ordinal'] == source_ref and source_ref <= 12), None)
-                payload['response'] = interpret(row['operation'], target, digest, output, source)
+                payload['response'] = (structured(row['operation'], target, digest, output, source)
+                    if row['operation'] in ('table','mermaid') else interpret(row['operation'], target, digest, output, source))
             except (ValueError, TypeError, KeyError, ValidationError) as exc:
                 raise ApiError(422, 'COPILOT_OUTPUT_INVALID', '模型结果未通过结构校验') from exc
             payload['provenance'] = {'run_id': row['model_run_id'], 'pack_id': row['pack_id'],

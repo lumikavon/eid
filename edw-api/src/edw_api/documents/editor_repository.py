@@ -40,7 +40,9 @@ def _read_history_target(conn, subject, workspace_id, document_id):
 def list_versions(conn, subject, workspace_id, document_id, before_revision=None):
     resource = _read_history_target(conn, subject, workspace_id, document_id)
     rows = conn.execute(
-        "SELECT v.id,v.revision,v.base_version_id,v.content_hash,v.created_by,v.created_at,v.ast "
+        "SELECT v.id,v.revision,v.base_version_id,v.content_hash,v.created_by,v.created_at,v.ast, "
+        "EXISTS(SELECT 1 FROM ai_patch_decision a WHERE a.workspace_id=d.workspace_id "
+        "AND a.document_id=d.id AND a.result_version_id=v.id) AS ai_patch "
         "FROM document_version v JOIN document d ON d.id=v.document_id "
         "WHERE d.id=%s AND d.workspace_id=%s AND d.owner_id=%s "
         "AND (%s::bigint IS NULL OR v.revision<%s::bigint) "
@@ -51,7 +53,8 @@ def list_versions(conn, subject, workspace_id, document_id, before_revision=None
         raise ApiError(503, "DOCUMENT_INTEGRITY_UNAVAILABLE", "历史版本当前不可用", retryable=True)
     next_revision = rows[49]["revision"] if len(rows) > 50 else None
     return {"items": [{key: value for key, value in row.items() if key != "ast"} |
-                      {"source": "template_create" if row["revision"] == 1 else "manual_edit"}
+                      {"source": "template_create" if row["revision"] == 1 else
+                       "ai_patch" if row["ai_patch"] else "manual_edit"}
                       for row in rows[:50]], "next_revision": next_revision}
 
 

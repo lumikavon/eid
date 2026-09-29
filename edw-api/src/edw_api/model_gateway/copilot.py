@@ -49,6 +49,45 @@ class CopilotOutput(BaseModel):
     quote: str = Field(min_length=1, max_length=1500)
 
 
+class StructuredOutput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    operation: str = Field(pattern='^(table|mermaid)$')
+    target_hash: str = Field(pattern=r'^[0-9a-f]{64}$')
+    source_ref: int = Field(ge=1, le=12)
+    quote: str = Field(min_length=1, max_length=1500)
+    rows: list[list[str]] | None = None
+    diagram: str | None = None
+
+
+def structured(operation, target, digest, output, source):
+    from .graphics import safe_mermaid, table_block
+    if operation == 'plantuml':
+        raise ApiError(422, 'GRAPH_UNSUPPORTED', 'PlantUML 未配置受支持的安全转换')
+    try:
+        data = StructuredOutput.model_validate(output)
+    except ValidationError as exc:
+        raise ApiError(422, 'GRAPH_INVALID', '结构化提案格式无效') from exc
+    if data.operation != operation or data.target_hash != digest or not source or data.source_ref != source['source_ref'] or data.quote.strip() != source['excerpt'][:1500].strip():
+        raise ApiError(422, 'GRAPH_SOURCE_INVALID', '结构化提案缺少当前匹配证据')
+    if operation == 'table':
+        if data.rows is None or data.diagram is not None:
+            raise ApiError(422, 'TABLE_INVALID', '表格结构无效')
+        block = table_block(target['id'], data.rows)
+    elif operation == 'mermaid':
+        if data.diagram is None or data.rows is not None:
+            raise ApiError(422, 'GRAPH_INVALID', '图形结构无效')
+        svg = safe_mermaid(data.diagram)
+        block = {'id': str(uuid5(UUID(target['id']), 'diagram:'+sha256(data.diagram.encode()).hexdigest())),
+                 'type': 'diagram', 'content': {'text': data.diagram, 'svg': svg}}
+    else:
+        raise ApiError(422, 'GRAPH_UNSUPPORTED', '图形格式不支持')
+    return {'family': 'patch', 'patch': {'target_id': target['id'], 'expected_hash': digest,
+        'kind': 'append_section_block', 'after': block, 'evidence': {
+            'source_id': source['source_id'], 'locator': source['locator'],
+            'version': source['version'], 'quote': data.quote}, 'state': 'REVIEW_REQUIRED'},
+        'target_hash': digest}
+
+
 def interpret(operation, target, digest, output, source):
     try:
         data = CopilotOutput.model_validate(output)
@@ -67,7 +106,8 @@ def interpret(operation, target, digest, output, source):
     if config.family == 'finding':
         return {'family': 'finding', 'items': [{'target_id': target['id'], 'reason': data.text,
             'evidence': evidence, 'state': 'REVIEW_REQUIRED',
-            'kind': 'pending' if operation == 'create_pending' else 'finding'}], 'target_hash': digest}
+            'kind': 'pending' if operation == 'create_pending' else 'finding',
+            **({'proposed_value': data.text} if operation == 'create_pending' else {})}], 'target_hash': digest}
     if config.family == 'patch':
         new_id = str(uuid5(UUID(target['id']), f'{operation}:{digest}:{sha256(data.text.encode()).hexdigest()}'))
         if config.target == 'section':

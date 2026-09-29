@@ -37,6 +37,8 @@ from .knowledge.evidence_routes import create_router as create_evidence_router
 from .model_gateway.routes import create_router as create_model_router
 from .model_gateway.section_routes import create_router as create_section_router
 from .model_gateway.copilot_routes import create_router as create_copilot_router
+from .model_gateway.patch_routes import create_router as create_patch_router
+from .model_gateway.pending_routes import create_router as create_pending_router
 from .documents.context_routes import create_router as create_context_router
 from .documents.outline_routes import create_router as create_outline_router
 from .documents.governance_routes import create_router as create_governance_router
@@ -65,6 +67,8 @@ app.include_router(create_evidence_router(settings, lambda token: verifier.verif
 app.include_router(create_model_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_section_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_copilot_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_patch_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_pending_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_context_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_outline_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))

@@ -53,3 +53,5 @@ context:
 ## Verification
 
 离线检查：`python -m compileall -q edw-api/src/edw_api/model_gateway tests/contract/test_copilot_catalog.py migrations/versions/0024_copilot_run.py`、`npm --prefix edw-web run typecheck`、`git diff --check` 均退出 0。测试套件、迁移、服务、浏览器、实际 Gateway 与撤权竞态运行验收保持 `not-run`。仅推进到 `review`，未进行质量门禁或独立验收。
+
+2026-09-29 Epic 4 跨 Story 源码复核：持久结果提交前补核来源版本、密级和摘录；待确认值继续明确为候审。返修后全 API 与契约/安全测试源码 `compileall`、Web `typecheck`、`git diff --check` 退出码均为 0；所有运行验证仍 `not-run`。

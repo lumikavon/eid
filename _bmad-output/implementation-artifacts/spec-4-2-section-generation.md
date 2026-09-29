@@ -81,3 +81,5 @@ context:
 - `git diff --check` — 无空白错误。
 
 静态检查：上述三条命令退出码 0；测试套件、迁移、真实服务及浏览器 `not-run`。实现状态仍待核对持久任务/来源门禁，不据静态结果声称验收通过。
+
+2026-09-29 Epic 4 跨 Story 源码核查了章节任务栅栏、当前 Pack 与只读提案路径；返修后 Python `compileall`、Web `typecheck`、`git diff --check` 退出码均为 0。未执行来源/并发运行验收，仍为 `not-run`。

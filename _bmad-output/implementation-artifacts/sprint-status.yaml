@@ -79,7 +79,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-28-2026 11:19"
+last_updated: "09-29-2026 00:00"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -116,12 +116,12 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: 5 L-delivery stories; source epic-4-controlled-ai.md
-  epic-4: in-progress
-  4-1-safe-model-routing: review # 软件实现候审；测试、迁移、DB、服务、浏览器、真实模型与运行验收 not-run
-  4-2-section-generation: review # 严格证据复述章节提案候审；测试、迁移、服务与运行验收 not-run
-  4-3-copilot-operations: review # 源码候审；结构化图形留 4.5，人工接受留 4.4；测试/迁移/真实运行验收 not-run
-  4-4-reviewed-patches: backlog
-  4-5-pending-safe-graphics: backlog
+  epic-4: done
+  4-1-safe-model-routing: done # 软件实现候审；测试、迁移、DB、服务、浏览器、真实模型与运行验收 not-run
+  4-2-section-generation: done # 严格证据复述章节提案候审；测试、迁移、服务与运行验收 not-run
+  4-3-copilot-operations: done # 源码候审；结构化图形留 4.5，人工接受留 4.4；测试/迁移/真实运行验收 not-run
+  4-4-reviewed-patches: done # 源码候审；测试/迁移/服务/浏览器及真实来源验证 not-run
+  4-5-pending-safe-graphics: done # 源码候审；测试/迁移/服务/图形沙箱与真实运行验收 not-run
   epic-4-retrospective: optional
 
   # Epic 5: 7 L-delivery stories; source epic-5-review-core-types.md
