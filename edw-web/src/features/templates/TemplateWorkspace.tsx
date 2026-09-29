@@ -23,7 +23,8 @@ const clearTemplateQueries=(cache:ReturnType<typeof useQueryClient>)=>{
 function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigationGuard,onNavigateTo}:Props&{documentId:string}){
  const navigate=useNavigate();const cache=useQueryClient();const base=`/workspaces/${current.workspace_id}`;const scope=contextKey(current);
  const [blocked,setBlocked]=useState(false);const handled=useRef<unknown>(null);
- const backRef=useRef<()=>void>(()=>navigate(`${base}/documents`));
+  const backRef=useRef<()=>void>(()=>navigate(`${base}/documents`));
+  const blockRef=useRef<(sectionId:string,blockId:string)=>void>(()=>{});
  const document=useQuery({queryKey:['template-document',scope,documentId],queryFn:({signal})=>getDocument(current,documentId,signal),retry:false,gcTime:0,enabled:!blocked});
  const fatal=document.error instanceof TemplateError&&protectedFailure(document.error)?document.error:null;
  useLayoutEffect(()=>{if(!fatal||handled.current===fatal)return;handled.current=fatal;setBlocked(true);if(fatal.failure==='authentication')onReject(fatal);else onRefresh()},[fatal,onReject,onRefresh]);
@@ -31,10 +32,10 @@ function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigatio
  const value=!blocked&&!fatal?document.data:undefined;
  return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>backRef.current()}>返回项目文档</button></header>
   {blocked||fatal?<div className="template-state" role="alert"><p>{errorText(fatal??document.error??new Error('当前权限已变化，请重新读取'))}</p><button className="btn" onClick={()=>{setBlocked(false);void document.refetch()}}>重新读取</button></div>:document.isFetching||document.isPending?<p className="template-state" role="status">正在读取当前授权文档…</p>:document.error?<div className="template-state" role="alert"><p>{errorText(document.error)}</p><button className="btn" onClick={()=>void document.refetch()}>重新读取</button></div>:null}
-  {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
+   {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onRegisterBlockNavigation={handler=>{blockRef.current=handler??(()=>{})}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
   {value&&<SectionGeneration key={value.version_id} current={current} document={value} onReject={onReject}/>}
   {value&&<CopilotPanel key={`copilot:${value.version_id}`} current={current} document={value}/>}
-  {value&&<ReviewStatus key={`review:${value.version_id}`} current={current} document={value}/>}
+   {value&&<ReviewStatus key={`review:${value.version_id}`} current={current} document={value} onNavigateToBlock={(sectionId,blockId)=>blockRef.current(sectionId,blockId)} onDocumentChanged={()=>void document.refetch()}/>}
  </div>;
 }
 function CatalogView({current,onReject,onRefresh}:Props){

@@ -56,7 +56,7 @@ function ImagePreview({current,documentId,resourceId,alt}: {current:WorkspaceAcc
  return <div>{url?<img src={url} alt={alt} style={{maxWidth:'100%',height:'auto'}}/>:<p role="status">{error||'正在核验图片权限…'}</p>}</div>;
 }
 
-export default function DomainEditor({current,value,onReject,onRefresh,onRegisterBack,onNavigateBack,onConfirmed,onRegisterNavigationGuard,onNavigateTo}: {current:WorkspaceAccess;value:DocumentData;onReject:(error:unknown)=>void;onRefresh:()=>void;onRegisterBack:(handler:()=>void)=>void;onNavigateBack:()=>void;onConfirmed:(value:DocumentData)=>void;onRegisterNavigationGuard?:(handler:((destination:string)=>void)|null)=>void;onNavigateTo?:(destination:string)=>void}){
+export default function DomainEditor({current,value,onReject,onRefresh,onRegisterBack,onRegisterBlockNavigation,onNavigateBack,onConfirmed,onRegisterNavigationGuard,onNavigateTo}: {current:WorkspaceAccess;value:DocumentData;onReject:(error:unknown)=>void;onRefresh:()=>void;onRegisterBack:(handler:()=>void)=>void;onRegisterBlockNavigation:(handler:((sectionId:string,blockId:string)=>void)|null)=>void;onNavigateBack:()=>void;onConfirmed:(value:DocumentData)=>void;onRegisterNavigationGuard?:(handler:((destination:string)=>void)|null)=>void;onNavigateTo?:(destination:string)=>void}){
  const [draft,setDraft]=useState<DomainAst>(()=>structuredClone(value.ast) as DomainAst);
  const draftRef=useRef(draft);draftRef.current=draft;
  const [confirmed,setConfirmed]=useState(value);const confirmedRef=useRef(value);
@@ -78,12 +78,23 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
  const onOutlinePending=useCallback((pending:boolean)=>{outlinePendingRef.current=pending;setOutlinePending(pending)},[]);
  const [unknown,setUnknown]=useState<{sent:DomainAst;baseVersion:string;revision:number}|null>(null);const [autoBlocked,setAutoBlocked]=useState(false);const [leaveOpen,setLeaveOpen]=useState(false);const leaveDestination=useRef<string|null>(null);
  const serverVersion=useRef(value.version_id);
- const [active,setActive]=useState(value.ast.document.sections[0]?.id??'');const [editor,setEditor]=useState<Editor|null>(null);const [canvasGeneration,setCanvasGeneration]=useState(0);
+  const [active,setActive]=useState(value.ast.document.sections[0]?.id??'');const [editor,setEditor]=useState<Editor|null>(null);const [canvasGeneration,setCanvasGeneration]=useState(0);
+  const [targetBlock,setTargetBlock]=useState('');
  const [link,setLink]=useState('');const [preview,setPreview]=useState('');const fileInput=useRef<HTMLInputElement|null>(null);const controller=useRef<AbortController|null>(null);
  const section=draft.document.sections.find(item=>item.id===active)??draft.document.sections[0];
  const figures=section?.blocks.filter(block=>block.type==='figure'&&typeof block.content?.resource_id==='string')??[];
  const selectedFigure=figures.find(block=>block.content.resource_id===preview);
- useEffect(()=>()=>controller.current?.abort(),[]);
+  useEffect(()=>()=>controller.current?.abort(),[]);
+  useEffect(()=>{onRegisterBlockNavigation((sectionId,blockId)=>{
+   if(dirtyRef.current||savingRef.current||historyMode||unknown){setStatus('请先保存或核对本地草稿，再定位审校块');return}
+   const section=(confirmedRef.current.ast as DomainAst).document.sections.find(item=>item.id===sectionId);
+   if(!section?.blocks.some(item=>item.id===blockId)){setStatus('审校块已失效，请重新读取文档和审校');return}
+   setActive(sectionId);setTargetBlock(blockId);setStatus('已定位审校块；修改并保存后重新审校');
+  });return()=>onRegisterBlockNavigation(null)},[onRegisterBlockNavigation,historyMode,unknown]);
+  useEffect(()=>{if(!editor||!targetBlock||section?.id!==active)return;
+   let found=false;editor.state.doc.descendants((node,pos)=>{if(node.attrs?.blockId===targetBlock){if(node.type.name==='domainAtom')editor.commands.setNodeSelection(pos);else editor.commands.setTextSelection(pos+1);editor.commands.focus();found=true;return false}return true});
+   if(found)setTargetBlock('');else setStatus('目标块不在当前编辑画布，需重新读取');
+  },[editor,active,section?.id,targetBlock]);
  useEffect(()=>{const change=()=>{const available=navigator.onLine;setOnline(available);if(!available)setStatus('离线 · 本地草稿未保存')};window.addEventListener('online',change);window.addEventListener('offline',change);return()=>{window.removeEventListener('online',change);window.removeEventListener('offline',change)}},[]);
  useEffect(()=>{const warn=(event:BeforeUnloadEvent)=>{if(!dirtyRef.current&&!contextPendingRef.current&&!outlinePendingRef.current)return;event.preventDefault();event.returnValue='' };window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[]);
  useEffect(()=>{

@@ -20,6 +20,11 @@ from ..documents.editor_repository import read_version
 from ..documents.context_repository import _head as context_head
 from ..errors import ApiError
 from ..model_gateway.repository import audit
+from ..model_gateway.patch_routes import Decision as PatchDecision, selected as selected_patches
+from ..model_gateway.patch_routes import persist_decision
+from ..model_gateway.copilot_routes import pack_job
+from ..model_gateway.sections import evidence
+from ..task_contract import canonical
 from .rules import CATEGORIES, RULE_VERSION, inspect
 
 
@@ -28,6 +33,17 @@ class ReviewRequest(BaseModel):
     request_key: UUID
     document_version_id: UUID
     document_revision: int = Field(ge=1, le=9007199254740991)
+
+
+class DispositionRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_key: UUID
+    base_version_id: UUID
+    base_revision: int = Field(ge=1, le=9007199254740991)
+    action: str = Field(pattern='^(accept|reject|modify|handled)$')
+    reason: str | None = Field(default=None, max_length=4000)
+    patch_run_id: UUID | None = None
+    recheck_run_id: UUID | None = None
 
 
 def current(conn, subject, workspace_id, document_id, *, review=False):
@@ -159,32 +175,41 @@ def current_results(conn, row):
 
 
 def issue_filters(severity, section_id, status, keyword):
-    """Only persisted open findings exist until human dispositions are introduced."""
     if severity and severity not in ('critical', 'high', 'medium', 'low'):
         raise ApiError(422, 'REVIEW_FILTER_INVALID', '无效严重级别')
-    if status and status != 'OPEN':
-        raise ApiError(422, 'REVIEW_FILTER_INVALID', '当前仅支持未处理状态')
+    if status and status not in ('OPEN', 'REJECTED', 'MODIFY', 'PENDING_RECHECK', 'HANDLED'):
+        raise ApiError(422, 'REVIEW_FILTER_INVALID', '无效处置状态')
     return severity, section_id, status, keyword.strip() or None if keyword else None
 
 
-def filtered_issues(conn, run_id, filters, *, sources_current, offset=0, limit=100):
-    severity, section_id, _status, keyword = filters
+def filtered_issues(conn, run_id, filters, *, sources_current, current_version_id=None, offset=0, limit=100):
+    severity, section_id, status, keyword = filters
     # The keyword predicate must use exactly the same safe fields as issue_view.
     # Source-linked quotes are excluded here; their authorization is checked per issue later.
-    condition = '''run_id=%s AND (%s::text IS NULL OR severity=%s)
-        AND (%s::uuid IS NULL OR section_id=%s::uuid)
-        AND (%s::text IS NULL OR ((%s::boolean AND source_id IS NULL AND quote ILIKE '%%' || %s || '%%')
-             OR impact ILIKE '%%' || %s || '%%' OR suggestion ILIKE '%%' || %s || '%%'
-             OR rule_id ILIKE '%%' || %s || '%%'))'''
-    params = (run_id, severity, severity, section_id, section_id,
-              keyword, sources_current, keyword, keyword, keyword, keyword)
-    count = conn.execute('SELECT count(*) AS count FROM review_issue WHERE ' + condition, params).fetchone()['count']
-    rows = conn.execute('SELECT * FROM review_issue WHERE ' + condition +
-                        ' ORDER BY created_at,id LIMIT %s OFFSET %s', (*params, limit, offset)).fetchall()
+    condition = '''i.run_id=%s AND (%s::text IS NULL OR i.severity=%s)
+        AND (%s::uuid IS NULL OR i.section_id=%s::uuid)
+        AND (%s::text IS NULL OR COALESCE(CASE WHEN d.action='handled'
+             AND rr.document_version_id<>%s::uuid THEN 'PENDING_RECHECK'
+             WHEN d.action='handled' THEN 'HANDLED' WHEN d.action='reject' THEN 'REJECTED'
+             WHEN d.action='modify' THEN 'MODIFY' WHEN d.action='accept' THEN 'PENDING_RECHECK'
+             END,'OPEN')=%s)
+        AND (%s::text IS NULL OR ((%s::boolean AND i.source_id IS NULL AND i.quote ILIKE '%%' || %s || '%%')
+             OR i.impact ILIKE '%%' || %s || '%%' OR i.suggestion ILIKE '%%' || %s || '%%'
+             OR i.rule_id ILIKE '%%' || %s || '%%'))'''
+    params = (run_id, severity, severity, section_id, section_id, status, current_version_id, status,
+               keyword, sources_current, keyword, keyword, keyword, keyword)
+    tables = ''' FROM review_issue i LEFT JOIN LATERAL
+        (SELECT * FROM review_disposition WHERE issue_id=i.id ORDER BY (action='handled') DESC,created_at DESC,id DESC LIMIT 1)
+        d ON true LEFT JOIN review_run rr ON rr.id=d.recheck_run_id '''
+    count = conn.execute('SELECT count(*) AS count' + tables + ' WHERE ' + condition, params).fetchone()['count']
+    rows = conn.execute('SELECT i.*,d.id AS disposition_id,d.action AS disposition_action,d.reason AS disposition_reason,'
+                        'd.result_version_id,d.recheck_run_id,rr.document_version_id AS recheck_version_id' +
+                         tables + ' WHERE ' + condition +
+                        ' ORDER BY i.created_at,i.id LIMIT %s OFFSET %s', (*params, limit, offset)).fetchall()
     return rows, count
 
 
-def issue_view(issue, ast, *, sources_current, citations=()):
+def issue_view(issue, ast, *, sources_current, citations=(), current_version_id=None):
     sections = ast['document']['sections']
     section = next((item for item in sections if item['id'] == str(issue['section_id'])), None)
     block = next((item for item in section['blocks'] if item['id'] == str(issue['block_id'])), None) if section else None
@@ -193,7 +218,17 @@ def issue_view(issue, ast, *, sources_current, citations=()):
         and citation['block_id'] == issue['block_id'] for citation in citations))
     result = {key: issue[key] for key in ('id', 'category', 'rule_id', 'severity', 'section_id',
               'block_id', 'claim_id', 'impact', 'suggestion')}
-    result.update(status='OPEN', section_title=section['title'] if section else None,
+    action = issue.get('disposition_action')
+    closed = action == 'handled' and issue.get('recheck_version_id') is not None and (
+        current_version_id is None or issue['recheck_version_id'] == current_version_id)
+    result.update(status='PENDING_RECHECK' if action == 'handled' and not closed else
+                  {'accept':'PENDING_RECHECK','reject':'REJECTED','modify':'MODIFY',
+                   'handled':'HANDLED'}.get(action, 'OPEN'),
+                   disposition_id=issue.get('disposition_id'),
+                   reason=issue.get('disposition_reason'),
+                   result_version_id=issue.get('result_version_id'),
+                   recheck_run_id=issue.get('recheck_run_id'),
+                   blocking=not closed, section_title=section['title'] if section else None,
                   block_type=block['type'] if block else None,
                   quote=issue['quote'] if authorized_source else '[来源需复核]',
                   source_id=issue['source_id'] if authorized_source else None,
@@ -238,8 +273,131 @@ def version_comparison(pinned, current_ast):
                 for block in section['blocks']}
     before, after = blocks(pinned), blocks(current_ast)
     return {'added_blocks': len(after.keys() - before.keys()),
-            'removed_blocks': len(before.keys() - after.keys()),
-            'changed_blocks': sum(before[key] != after[key] for key in before.keys() & after.keys())}
+             'removed_blocks': len(before.keys() - after.keys()),
+             'changed_blocks': sum(before[key] != after[key] for key in before.keys() & after.keys())}
+
+
+def same_defect(issue, other):
+    return (issue['category'] == other['category'] and issue['rule_id'] == other['rule_id']
+            and issue['section_id'] == other['section_id'] and issue['block_id'] == other['block_id']
+            and issue['claim_id'] == other['claim_id'])
+
+
+def disposition_digest(command):
+    return hashlib.sha256(canonical(command.model_dump(mode='json', exclude={'request_key'}))).hexdigest()
+
+
+def disposition(conn, subject, workspace_id, document_id, run_id, issue_id, command, request,
+                initial=(), views=()):
+    # Lock the workspace before the head; permission changes take an exclusive workspace lock.
+    checked(conn, subject, workspace_id, 'document:review', document_id, exclusive=True)
+    conn.execute('SELECT id FROM document WHERE id=%s AND workspace_id=%s FOR UPDATE',
+                 (document_id, workspace_id))
+    facts, auth, head = current(conn, subject, workspace_id, document_id, review=True)
+    digest = disposition_digest(command)
+    prior = conn.execute('''SELECT * FROM review_disposition WHERE workspace_id=%s AND actor_id=%s
+        AND request_key=%s''', (workspace_id, facts['actor_id'], command.request_key)).fetchone()
+    if prior:
+        if (prior['document_id'] != document_id or prior['run_id'] != run_id or prior['issue_id'] != issue_id
+                or prior['subject'] != subject or prior['request_hash'] != digest):
+            raise ApiError(409, 'REVIEW_REQUEST_CONFLICT', '请求标识已用于其他处置')
+        if ((prior['action'] == 'accept' and (head['head_version_id'] != prior['result_version_id']
+                or head['revision'] != prior['result_revision'])) or
+                (prior['action'] != 'accept' and (head['head_version_id'] != prior['base_version_id']
+                or head['revision'] != prior['base_revision']))):
+            raise ApiError(409, 'REVIEW_VERSION_CHANGED', '处置版本已不是当前版本')
+        return {'data': disposition_view(prior, replayed=True)}
+    row = conn.execute('''SELECT * FROM review_run WHERE id=%s AND workspace_id=%s AND document_id=%s''',
+                       (run_id, workspace_id, document_id)).fetchone()
+    issue = conn.execute('SELECT * FROM review_issue WHERE run_id=%s AND id=%s', (run_id, issue_id)).fetchone()
+    if not row or not issue:
+        raise ApiError(404, 'REVIEW_ISSUE_NOT_FOUND', '问题不存在或无权处置')
+    if head['head_version_id'] != command.base_version_id or head['revision'] != command.base_revision:
+        raise ApiError(409, 'REVIEW_VERSION_CHANGED', '文档已产生新版本')
+    results, _ = current_results(conn, row)
+    if row['state'] != 'COMPLETED':
+        raise ApiError(409, 'REVIEW_RUN_STALE', '审校运行或权限已变化')
+    if command.action != 'handled':
+        if not accessible_result(conn, row, head, auth, subject, workspace_id, document_id, results):
+            raise ApiError(409, 'REVIEW_RUN_STALE', '须对当前版本和来源重新审校')
+    elif row['document_version_id'] == head['head_version_id']:
+        raise ApiError(409, 'REVIEW_RECHECK_REQUIRED', '须在正文更新后独立重审')
+    # Historical findings may be closed only by a fresh current run; the old
+    # runner's policy epoch is not an authorization for today's operator.
+    earlier = conn.execute('''SELECT * FROM review_disposition WHERE issue_id=%s
+        ORDER BY created_at DESC,id DESC''', (issue_id,)).fetchall()
+    if any(item['action'] == 'handled' for item in earlier) or (earlier and command.action != 'handled'):
+        raise ApiError(409, 'REVIEW_ALREADY_DISPOSED', '问题已有不可变处置')
+    reason = command.reason.strip() if command.reason else None
+    if command.action == 'reject' and not reason:
+        raise ApiError(422, 'REVIEW_REASON_REQUIRED', '拒绝必须说明理由')
+    if ((command.action != 'accept' and command.patch_run_id)
+            or (command.action != 'handled' and command.recheck_run_id)):
+        raise ApiError(422, 'REVIEW_DISPOSITION_INVALID', '处置证据与操作不匹配')
+    patch_id = result_id = result_revision = recheck_id = None
+    if command.action == 'modify':
+        sections = head['ast']['document']['sections']
+        section = next((s for s in sections if s['id'] == str(issue['section_id'])), None)
+        if not section or not any(b['id'] == str(issue['block_id']) for b in section['blocks']):
+            raise ApiError(409, 'REVIEW_LOCATOR_CHANGED', '问题未定位到当前真实块')
+        from ..documents.editor_repository import editable_document
+        editable_document(conn, subject, workspace_id, document_id)
+    if command.action == 'accept':
+        if not command.patch_run_id or len(initial) != 1 or len(views) != 1:
+            raise ApiError(422, 'REVIEW_PATCH_REQUIRED', '必须选择经过校验的 Patch')
+        proposal = initial[0][0]
+        if (proposal['id'] != command.patch_run_id or proposal['section_id'] != issue['section_id']
+                or proposal['block_id'] != issue['block_id']):
+            raise ApiError(409, 'REVIEW_PATCH_MISMATCH', 'Patch 与问题定位不一致')
+        patch_command = PatchDecision(request_key=command.request_key, base_version_id=command.base_version_id,
+            base_revision=command.base_revision, action='accept', run_ids=[command.patch_run_id])
+        patch = persist_decision(conn, subject, workspace_id, document_id, patch_command, request,
+                                 initial, views, None)
+        patch_id, result_id, result_revision = patch['data']['id'], patch['data']['version_id'], patch['data']['revision']
+    if command.action == 'handled':
+        if earlier and earlier[0]['action'] != 'accept':
+            raise ApiError(409, 'REVIEW_ALREADY_DISPOSED', '既有决议保持未解决；须对新审校问题作出处置')
+        if earlier and earlier[0]['action'] == 'accept' and (
+                row['document_version_id'] == head['head_version_id'] or
+                earlier[0]['result_version_id'] != head['head_version_id']):
+            raise ApiError(409, 'REVIEW_VERSION_CHANGED', 'Patch 结果不是当前版本')
+        if not command.recheck_run_id or command.recheck_run_id == run_id:
+            raise ApiError(409, 'REVIEW_RECHECK_REQUIRED', '必须选择后续独立重审')
+        recheck = conn.execute('''SELECT * FROM review_run WHERE id=%s AND workspace_id=%s AND document_id=%s''',
+                               (command.recheck_run_id, workspace_id, document_id)).fetchone()
+        if (not recheck or recheck['created_at'] <= row['created_at']
+                or recheck['document_revision'] <= row['document_revision']):
+            raise ApiError(409, 'REVIEW_RECHECK_REQUIRED', '重审必须晚于原审校')
+        recheck_results, _ = current_results(conn, recheck)
+        if not accessible_result(conn, recheck, head, auth, subject, workspace_id, document_id, recheck_results):
+            raise ApiError(409, 'REVIEW_RECHECK_REQUIRED', '重审不满足当前版本、来源与权限')
+        peers = conn.execute('SELECT * FROM review_issue WHERE run_id=%s', (recheck['id'],)).fetchall()
+        if any(same_defect(issue, peer) for peer in peers):
+            raise ApiError(409, 'REVIEW_DEFECT_PERSISTS', '重审仍发现同一缺陷')
+        recheck_id = recheck['id']
+    identifier = uuid4()
+    conn.execute('''INSERT INTO review_disposition(id,workspace_id,document_id,run_id,issue_id,actor_id,
+        subject,request_key,request_hash,action,base_version_id,base_revision,reason,patch_decision_id,
+        result_version_id,result_revision,recheck_run_id,section_id,block_id,policy_epoch)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+        (identifier, workspace_id, document_id, run_id, issue_id, facts['actor_id'], subject,
+         command.request_key, digest, command.action, command.base_version_id, command.base_revision,
+         reason, patch_id, result_id, result_revision, recheck_id, issue['section_id'], issue['block_id'],
+         Jsonb(list(auth.policy_epoch))))
+    audit(conn, facts['actor_id'], workspace_id, issue_id, 'review:disposition:' + command.action,
+          {'run_id': str(run_id), 'version_id': str(row['document_version_id'])},
+          {'disposition_id': str(identifier), 'patch_decision_id': str(patch_id) if patch_id else None,
+           'result_version_id': str(result_id) if result_id else None,
+           'recheck_run_id': str(recheck_id) if recheck_id else None}, request.state.request_id, request.state.trace_id)
+    return {'data': {'id': identifier, 'action': command.action, 'version_id': result_id,
+                     'revision': result_revision, 'section_id': issue['section_id'],
+                     'block_id': issue['block_id'], 'replayed': False}}
+
+
+def disposition_view(row, *, replayed):
+    return {'id': row['id'], 'action': row['action'], 'version_id': row['result_version_id'],
+            'revision': row['result_revision'], 'section_id': row['section_id'],
+            'block_id': row['block_id'], 'replayed': replayed}
 
 
 def execute(settings, workspace_id, document_id, run_id):
@@ -438,8 +596,10 @@ def create_router(settings, verify):
             payload['current_eligible'] = accessible_result(conn, row, head, auth,
                 current_actor.subject, workspace_id, document_id, results)
             ast, sources_current, citations = inspection(conn, row, head, current_actor.subject, workspace_id, document_id)
-            issues, total = filtered_issues(conn, run_id, filters, sources_current=sources_current, offset=offset)
-            visible = [issue_view(item, ast, sources_current=sources_current, citations=citations) for item in issues]
+            issues, total = filtered_issues(conn, run_id, filters, sources_current=sources_current,
+                                            current_version_id=head['head_version_id'], offset=offset)
+            visible = [issue_view(item, ast, sources_current=sources_current, citations=citations,
+                                   current_version_id=head['head_version_id']) for item in issues]
             # A ratio is defined only for this concrete, bounded result set's count, not a quality score.
             return {'data': {**payload, 'results': [dict(item) for item in results],
                              'issues': visible, 'issue_count': total, 'returned_count': len(visible),
@@ -468,11 +628,45 @@ def create_router(settings, verify):
             if not row:
                 raise ApiError(404, 'REVIEW_NOT_FOUND', '审校不存在或无权查看')
             ast, sources_current, citations = inspection(conn, row, head, current_actor.subject, workspace_id, document_id)
-            issue = conn.execute('SELECT * FROM review_issue WHERE run_id=%s AND id=%s',
-                                 (run_id, issue_id)).fetchone()
+            issue = conn.execute('''SELECT i.*,d.id AS disposition_id,d.action AS disposition_action,
+                d.reason AS disposition_reason,d.result_version_id,d.recheck_run_id,
+                rr.document_version_id AS recheck_version_id
+                FROM review_issue i LEFT JOIN LATERAL (SELECT * FROM review_disposition
+                WHERE issue_id=i.id ORDER BY (action='handled') DESC,created_at DESC,id DESC LIMIT 1) d ON true
+                LEFT JOIN review_run rr ON rr.id=d.recheck_run_id
+                WHERE i.run_id=%s AND i.id=%s''',
+                                  (run_id, issue_id)).fetchone()
             if not issue:
                 raise ApiError(404, 'REVIEW_ISSUE_NOT_FOUND', '问题不存在或无权查看')
-            return {'data': issue_view(issue, ast, sources_current=sources_current, citations=citations)}
+            return {'data': issue_view(issue, ast, sources_current=sources_current, citations=citations,
+                                       current_version_id=head['head_version_id'])}
+
+    @router.post('/{run_id}/issues/{issue_id}/dispositions')
+    def decide_issue(workspace_id: UUID, document_id: UUID, run_id: UUID, issue_id: UUID,
+                     command: DispositionRequest, request: Request, response: Response,
+                     current_actor=Depends(actor)):
+        response.headers['Cache-Control'] = 'no-store'
+        initial, views = (), ()
+        if command.action == 'accept' and command.patch_run_id:
+            # Evidence retrieval happens outside the commit transaction; persist_decision
+            # rechecks every selected run and evidence under the final lock.
+            with database() as preliminary:
+                facts, _, head = current(preliminary, current_actor.subject, workspace_id, document_id, review=True)
+                prior = preliminary.execute('''SELECT id FROM review_disposition WHERE workspace_id=%s
+                    AND actor_id=%s AND request_key=%s''',
+                    (workspace_id, facts['actor_id'], command.request_key)).fetchone()
+                if not prior and head['head_version_id'] == command.base_version_id and head['revision'] == command.base_revision:
+                    owned = preliminary.execute('''SELECT 1 FROM review_issue i JOIN review_run r ON r.id=i.run_id
+                        WHERE i.id=%s AND r.id=%s AND r.workspace_id=%s AND r.document_id=%s''',
+                        (issue_id, run_id, workspace_id, document_id)).fetchone()
+                    if not owned:
+                        raise ApiError(404, 'REVIEW_ISSUE_NOT_FOUND', '问题不存在或无权处置')
+                    initial = selected_patches(preliminary, current_actor.subject, workspace_id, document_id,
+                                               [command.patch_run_id], command.base_version_id, command.base_revision)
+            views = [evidence(settings, pack_job(row, outline)) for row, _, outline in initial]
+        with database() as conn:
+            return disposition(conn, current_actor.subject, workspace_id, document_id,
+                               run_id, issue_id, command, request, initial, views)
 
     @router.post('/{run_id}/wake')
     def wake(workspace_id: UUID, document_id: UUID, run_id: UUID,
