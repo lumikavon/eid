@@ -125,8 +125,8 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: 7 L-delivery stories; source epic-5-review-core-types.md
-  epic-5: backlog
-  5-1-pinned-reviewers: backlog
+  epic-5: in-progress
+  5-1-pinned-reviewers: review # 软件实现/编译/typecheck 完成；测试、迁移、真实模型与运行验收 not-run，独立质量门禁未执行
   5-2-review-inspection: backlog
   5-3-issue-disposition: backlog
   5-4-technical-solution: backlog

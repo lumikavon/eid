@@ -7,6 +7,7 @@ import DomainEditor from './DomainEditor';
 import SectionGeneration from './SectionGeneration';
 import CopilotPanel from './CopilotPanel';
 import TemplateGovernance from './TemplateGovernance';
+import ReviewStatus from './ReviewStatus';
 import './templates.css';
 
 type Props={current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void;onRegisterNavigationGuard?:(handler:((destination:string)=>void)|null)=>void;onNavigateTo?:(destination:string)=>void};
@@ -33,6 +34,7 @@ function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigatio
   {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
   {value&&<SectionGeneration key={value.version_id} current={current} document={value} onReject={onReject}/>}
   {value&&<CopilotPanel key={`copilot:${value.version_id}`} current={current} document={value}/>}
+  {value&&<ReviewStatus key={`review:${value.version_id}`} current={current} document={value}/>}
  </div>;
 }
 function CatalogView({current,onReject,onRefresh}:Props){

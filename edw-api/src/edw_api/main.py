@@ -43,6 +43,7 @@ from .documents.context_routes import create_router as create_context_router
 from .documents.outline_routes import create_router as create_outline_router
 from .documents.governance_routes import create_router as create_governance_router
 from .tasks.routes import create_router as create_task_router
+from .review.routes import create_router as create_review_router
 from .keycloak_contract import (
     MONITOR_EFFECTIVE_REALM_MANAGEMENT_ROLES,
     WEB_CLIENT_ID,
@@ -74,6 +75,7 @@ app.include_router(create_outline_router(settings, lambda token: verifier.verify
 app.include_router(create_governance_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_canonical_router(settings, lambda token: verifier.verify(token)))
 app.include_router(create_task_router(settings, lambda token: verifier.verify(token)))
+app.include_router(create_review_router(settings, lambda token: verifier.verify(token)))
 logger = logging.getLogger(__name__)
 
 TRACEPARENT_RE = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})")
