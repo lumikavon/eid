@@ -53,19 +53,23 @@ class CancelConnection:
     def execute(self, sql, params):
         self.calls.append((sql, params))
         if "FROM durable_task" in sql:
-            assert params == (TASK, WORKSPACE, ACTOR)
+            assert params == (TASK, WORKSPACE, str(ACTOR))
             return OneRow(self.row)
-        assert sql == "SELECT eid_task_cancel_v2(%s,%s,%s) AS outcome"
+        assert sql == "SELECT eid_task_cancel_observed_v1(%s,%s,%s) AS outcome"
         assert params == (TASK, ACTOR, "cancel-request")
         return OneRow({"outcome": self.outcome})
 
 
 def current_owner(monkeypatch):
     def checked(_conn, subject, workspace_id, operation):
-        assert (subject, workspace_id, operation) == ("verified", WORKSPACE, "inventory:read")
-        return {}, None, SimpleNamespace(actor_id=str(ACTOR))
+        assert (subject, workspace_id, operation) == ("verified", WORKSPACE, "workspace:read")
+        return {}, None, SimpleNamespace(actor_id=str(ACTOR), workspace_id=str(WORKSPACE))
 
     monkeypatch.setattr(repository, "checked", checked)
+    monkeypatch.setattr(repository, '_database_now', lambda _: NOW)
+    def authorize(facts, operation, *, now):
+        assert facts == {} and operation == 'inventory:read' and now == NOW
+    monkeypatch.setattr(repository, 'authorize', authorize)
 
 
 def test_cancel_calls_db_function_only_after_current_owner_check(monkeypatch):
@@ -76,7 +80,7 @@ def test_cancel_calls_db_function_only_after_current_owner_check(monkeypatch):
     assert snapshot.state == "RUNNING"
     assert snapshot.cancel_requested is True
     assert snapshot.external_effect_state == "none"
-    assert ["eid_task_cancel_v2" in sql for sql, _ in conn.calls] == [False, True, False]
+    assert ["eid_task_cancel_observed_v1" in sql for sql, _ in conn.calls] == [False, True, False]
 
 
 def test_cross_workspace_or_other_owner_cannot_invoke_cancel_function(monkeypatch):

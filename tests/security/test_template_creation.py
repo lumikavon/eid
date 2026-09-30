@@ -76,7 +76,7 @@ def test_canonical_create_route_requires_idempotency_key():
     router = routes.create_canonical_router(object(), lambda token: token)
     route = next(item for item in router.routes if item.path == "/api/v1/documents")
     assert route.methods == {"POST"}
-    assert any(parameter.alias.casefold() == "idempotency-key" and parameter.required
+    assert any(parameter.alias.casefold() == "idempotency-key" and parameter.field_info.is_required()
                for parameter in route.dependant.header_params)
 
 

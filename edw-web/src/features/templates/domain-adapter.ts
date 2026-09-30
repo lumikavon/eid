@@ -6,9 +6,9 @@ import {Table} from '@tiptap/extension-table';
 export type DomainBlock={id:string;type:string;content:Record<string,unknown>;[key:string]:unknown};
 export type DomainSection={id:string;title:string;blocks:DomainBlock[];[key:string]:unknown};
 export type DomainAst={schema_version:'1.0';document:{metadata:Record<string,unknown>;sections:DomainSection[];claims:unknown[];citations:unknown[];review_state:Record<string,unknown>;[key:string]:unknown};[key:string]:unknown};
-const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const safeLink=(value:unknown):value is string=>{if(typeof value!=='string'||/[\s\\]/.test(value))return false;try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)&&!!url.hostname&&!url.username&&!url.password&&url.port!=='0'}catch{return false}};
-const known=new Set(['paragraph','heading','table','figure','diagram','requirement','citation','warning','code','form']);
+const known=new Set(['paragraph','heading','table','figure','diagram','requirement','test_item','test_case','acceptance','citation','warning','code','form']);
 const asRecord=(value:unknown):Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const text=(value:unknown):string=>typeof value==='string'?value:'';
 

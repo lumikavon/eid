@@ -89,6 +89,29 @@ def create_router(settings, verify):
         response.headers["Cache-Control"] = "no-store"
         return DocumentResponse(data=result)
 
+    @router.get('/documents/{document_id}/test-coverage')
+    def test_coverage(workspace_id: UUID, document_id: UUID, response: Response, current=Depends(actor)):
+        response.headers['Cache-Control'] = 'no-store'
+        with database() as conn:
+            checked(conn, current.subject, workspace_id, 'resource:read', document_id)
+            row = conn.execute('SELECT head_version_id FROM document WHERE id=%s AND workspace_id=%s',
+                               (document_id, workspace_id)).fetchone()
+            if not row:
+                raise AccessDenied()
+            value = read_version(conn, current.subject, workspace_id, document_id, row['head_version_id'])
+            from .traceability import coverage
+            result = coverage(conn, current.subject, workspace_id, value['ast'], document_id, value['version_id'])
+            reverse = []
+            for link in conn.execute('''SELECT t.* FROM requirement_trace t JOIN document d
+                    ON d.id=t.document_id AND d.head_version_id=t.version_id
+                    WHERE t.workspace_id=%s AND t.target_document_id=%s''', (workspace_id, document_id)).fetchall():
+                try:
+                    read_version(conn, current.subject, workspace_id, link['document_id'], link['version_id'])
+                    reverse.append({**dict(link), 'state': 'current' if link['target_version_id'] == row['head_version_id'] else 'stale'})
+                except (AccessDenied, ApiError):
+                    continue
+            return {'data': {**result, 'reverse': reverse}}
+
     @router.post("/documents/{document_id}/images", status_code=201)
     async def upload(workspace_id: UUID, document_id: UUID, request: Request,
                      current=Depends(actor)):

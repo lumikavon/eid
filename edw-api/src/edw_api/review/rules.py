@@ -5,7 +5,11 @@ from uuid import uuid4
 
 CATEGORIES = ('structure', 'fact', 'requirement', 'technical', 'quality',
               'consistency', 'style', 'safety')
-RULE_VERSION = 'local-review-3'
+RULE_VERSION = 'local-review-5'
+PRD_FIELDS = {'requirement_id': 'FR-ID', 'name': '名称', 'role': '角色', 'scenario': '场景',
+              'prerequisites': '前置条件', 'normal_flow': '正常流程', 'exception_flow': '异常流程',
+              'rules': '业务规则', 'inputs': '输入', 'outputs': '输出', 'permissions': '权限',
+              'nfr': '非功能要求', 'acceptance_criteria': '验收条件'}
 VAGUE = re.compile(r'\b(?:fast|robust|scalable|high.performance)\b|快速|高效|稳定|先进|适当', re.I)
 STANDARD_HINT = re.compile(r'标准|\bstandard\b', re.I)
 STANDARD = re.compile(r'\b(?:GB(?:/T)?|ISO|IEC|IEEE)\s*[- ]?\s*\d{3,6}(?:[.\-]\d+)*(?:[-:]\d{4})?\b', re.I)
@@ -41,8 +45,10 @@ def inspect(ast, template_structure=None, claims=(), *, project_facts=(), stale_
     terms = defaultdict(list)
     facts = {fact['key'].casefold(): fact for fact in project_facts if fact.get('confirmed')}
     technical = ast['document'].get('metadata', {}).get('document_type') == 'technical_solution'
+    prd = ast['document'].get('metadata', {}).get('document_type') == 'prd'
     citations = tuple(citations)
     claims = tuple(claims)
+    requirement_ids = defaultdict(list)
 
     def add(category, rule, severity, section, block, quote, impact, suggestion, **details):
         issues.append({'id': str(uuid4()), 'category': category, 'rule_id': rule,
@@ -77,9 +83,73 @@ def inspect(ast, template_structure=None, claims=(), *, project_facts=(), stale_
         for block in section['blocks']:
             content = block.get('content', {})
             text = content.get('text') or content.get('statement') or ''
+            # Scan every nested textual field, including tables and structured flows.
+            def strings(value, path=''):
+                if isinstance(value, str):
+                    yield path, value
+                elif isinstance(value, dict):
+                    for key, entry in value.items():
+                        yield from strings(entry, f'{path}.{key}' if path else key)
+                elif isinstance(value, list):
+                    for index, entry in enumerate(value):
+                        yield from strings(entry, f'{path}[{index}]')
+            for field, value in strings(content):
+                if SECRET.search(value):
+                    add('safety', 'sensitive_literal', 'critical', section, block, '[REDACTED]',
+                        '结构字段疑似包含敏感凭据', '移除凭据并重新核验', field=field)
+                if field not in ('text', 'statement') and VAGUE.search(value):
+                    add('quality', 'vague_statement', 'medium', section, block, VAGUE.search(value).group(),
+                        '结构字段缺少可衡量条件', '补充有来源的指标和验证方式', field=field)
             if not isinstance(text, str):
                 continue
             if block['type'] == 'requirement':
+                if ast['document'].get('metadata', {}).get('document_type') == 'technical_requirements':
+                    for field in ('requirement_id', 'statement', 'condition', 'metric', 'unit',
+                                  'threshold', 'verification_method'):
+                        if not isinstance(content.get(field), str) or not content[field].strip():
+                            add('requirement', 'measurable_missing_field', 'high', section, block, field,
+                                '技术要求不可测量', '补齐有来源的条件、指标、单位、阈值和验证方法', field=field)
+                    for field in ('condition', 'metric', 'unit', 'threshold'):
+                        value = content.get(field)
+                        if value and not any(str(c.get('id')) in content.get('source_refs', [])
+                                and str(c.get('section_id')) == section['id']
+                                and str(c.get('block_id')) == block['id']
+                                and not c.get('needs_review') and c.get('chain') == 'attachment'
+                                and value in c.get('quoted_text', '') for c in citations):
+                            add('fact', 'unsupported_threshold', 'high', section, block, value,
+                                '测量字段没有当前来源依据', '保留待确认，不生成替代数值', field=field)
+                if prd:
+                    for field, label in {**PRD_FIELDS, 'statement': '需求陈述'}.items():
+                        value = content.get(field)
+                        if not isinstance(value, str) or not value.strip():
+                            add('requirement', 'prd_missing_field', 'high', section, block, label,
+                                'PRD 结构化需求字段缺失', '在需求块填写该字段并保存', field=field)
+                    identifier = content.get('requirement_id')
+                    if isinstance(identifier, str) and identifier.strip():
+                        requirement_ids[identifier.strip().casefold()].append((section, block))
+                        if not re.fullmatch(r'FR-[A-Za-z0-9][A-Za-z0-9._-]{0,126}', identifier):
+                            add('requirement', 'prd_invalid_id', 'high', section, block, identifier,
+                                'PRD 需求编号格式待修正', '使用稳定且唯一的 FR-ID', field='requirement_id')
+                    refs = content.get('source_refs', [])
+                    if not isinstance(refs, list):
+                        refs = []
+                    elif len(refs) != len(set(str(ref) for ref in refs)):
+                        add('requirement', 'prd_duplicate_source_ref', 'medium', section, block, text,
+                            '需求重复关联同一来源', '核对并保留唯一引用')
+                    for ref in refs:
+                        matches = [citation for citation in citations if str(citation.get('id')) == str(ref)]
+                        if not any(str(c.get('section_id')) == section['id'] and
+                                   str(c.get('block_id')) == block['id'] and
+                                   c.get('selected_text') == content.get('statement') and
+                                   isinstance(c.get('selected_text'), str) and bool(c.get('selected_text')) and
+                                   c['selected_text'] in c.get('quoted_text', '') and
+                                   not c.get('needs_review') and c.get('chain') == 'attachment'
+                                   for c in matches):
+                            add('fact', 'prd_source_unverified', 'high', section, block, str(ref),
+                                '需求来源不属于当前授权区块引用', '重新关联当前可核验的引用', source_ref=str(ref))
+                    if not refs:
+                        add('fact', 'prd_source_unverified', 'high', section, block, text,
+                            '需求缺少当前授权的来源关联', '为需求关联当前区块引用')
                 if not content.get('verification_method'):
                     add('requirement', 'missing_verification', 'high', section, block, text,
                         '需求缺少验证方法', '填写验证方法')
@@ -93,9 +163,6 @@ def inspect(ast, template_structure=None, claims=(), *, project_facts=(), stale_
             if STANDARD_HINT.search(text) and not STANDARD.search(text):
                 add('technical', 'standard_identifier', 'medium', section, block, text,
                     '标准标识无法精确核对', '提供现行适用的标准编号和来源')
-            for match in SECRET.finditer(text):
-                add('safety', 'sensitive_literal', 'critical', section, block, '[REDACTED]',
-                    '正文疑似包含敏感凭据', '移除凭据并按安全流程核验')
             for match in METRIC.finditer(text):
                 prefix = text[max(0, match.start() - 45):match.start()]
                 key = re.split(r'[。；;，,\n]', prefix)[-1].strip(' :：\t').casefold()
@@ -147,6 +214,13 @@ def inspect(ast, template_structure=None, claims=(), *, project_facts=(), stale_
                 add('style', 'text_format', 'low', section, block, '[格式片段]',
                     '文字格式不一致', '核对段落空格或重复标点')
 
+    for identifier, entries in requirement_ids.items():
+        if len(entries) > 1:
+            for section, block in entries:
+                add('requirement', 'prd_duplicate_id', 'high', section, block, identifier,
+                    'PRD 的 FR-ID 重复', '人工核对来源后分配唯一编号',
+                    counterparts=[{'section_id': other['id'], 'block_id': peer['id']}
+                                  for other, peer in entries if peer['id'] != block['id']])
     for key, entries in candidates.items():
         if len({value for value, _, _ in entries}) > 1:
             for value, section, block in entries:

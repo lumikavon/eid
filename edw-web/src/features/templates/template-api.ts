@@ -92,6 +92,10 @@ export async function getDocumentVersions(current:WorkspaceAccess,id:string,befo
 export async function getDocumentVersion(current:WorkspaceAccess,id:string,versionId:string,signal?:AbortSignal):Promise<DocumentData>{
  if(!validId(id)||!validId(versionId))throw new TemplateError('validation','历史版本标识无效');const value=(await request(current,`/documents/${id}/versions/${versionId}`,signal)).value;const result=document(value,current,id);if(result.version_id!==versionId)return invalid();return result;
 }
+export async function getTestCoverage(current:WorkspaceAccess,id:string,signal?:AbortSignal):Promise<unknown>{
+ if(!validId(id))throw new TemplateError('validation','文档标识无效');
+ return (await request(current,`/documents/${id}/test-coverage`,signal)).value;
+}
 export async function getImage(current:WorkspaceAccess,id:string,mediaId:string,signal?:AbortSignal):Promise<Blob>{
  ensureContext(current);if(!validId(id)||!validId(mediaId))throw new TemplateError('validation','图片标识无效');
  const accessToken=token();if(!accessToken)throw new TemplateError('authentication','登录已失效，请重新登录',401);

@@ -22,7 +22,7 @@ def test_parser_fails_closed_without_namespace_tool(monkeypatch):
 def test_sandbox_command_unshares_network_and_mounts_only_trusted_paths():
     command = validation._sandbox_command(Path(validation.__file__).with_name(
         "template_validator_process.py").resolve())
-    assert command[0] == "/usr/bin/bwrap"
+    assert Path(command[0]) == Path('/usr/bin/bwrap')
     assert all(flag in command for flag in ("--unshare-user", "--unshare-pid", "--unshare-net",
                                          "--unshare-ipc", "--unshare-uts", "--unshare-cgroup",
                                          "--clearenv", "--die-with-parent", "--new-session"))

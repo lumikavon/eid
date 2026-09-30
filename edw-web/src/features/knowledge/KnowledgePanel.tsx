@@ -8,7 +8,7 @@ import type {Bookmark} from './claim-api';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const labels:Record<Category,string>={all:'全部',attachment:'附件',enterprise:'企业',golden:'Golden'};
-export default function KnowledgePanel({current,documentId,onReject,onRefresh,compact=false,bookmark,onCite}:{current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void;compact?:boolean;bookmark?:Bookmark|null;onCite?:(claimId:string,linkId:string,quote:string)=>Promise<void>}){
+export default function KnowledgePanel({current,documentId,onReject,onRefresh,compact=false,bookmark,onCite,requirementTarget,onCiteRequirement}:{current:WorkspaceAccess;documentId?:string;onReject:(error:unknown)=>void;onRefresh:()=>void;compact?:boolean;bookmark?:Bookmark|null;onCite?:(claimId:string,linkId:string,quote:string)=>Promise<void>;requirementTarget?:{section_id:string;block_id:string}|null;onCiteRequirement?:(claimId:string,linkId:string,quote:string)=>Promise<void>}){
  const [contextId,setContextId]=useState(documentId??'');const [query,setQuery]=useState('');const [category,setCategory]=useState<Category>('all');
  const [classification,setClassification]=useState('');const [version,setVersion]=useState('');const [contextVersion,setContextVersion]=useState('');
  const [result,setResult]=useState<SearchResult|null>(null);const [selected,setSelected]=useState<Hit|null>(null);
@@ -56,7 +56,7 @@ export default function KnowledgePanel({current,documentId,onReject,onRefresh,co
  return <section className={`knowledge-panel${compact?' compact':''}`} aria-label="授权知识检索" data-testid="knowledge-panel">
   {!compact&&<header className="page-header"><h1>知识库 · 授权检索</h1></header>}
   {documentId&&<EvidencePanel key={`${documentId}:${current.actor_id}:${current.policy_epoch.join(':')}`} current={current} documentId={documentId} onReject={onReject} onRefresh={onRefresh} onSelectionChange={()=>{reset();setClaimGeneration(n=>n+1)}} onBind={(packId,index,excerpt,relation)=>binder.current?.(packId,index,excerpt,relation)}/>}
-  {documentId&&<ClaimPanel key={`${documentId}:${claimGeneration}`} current={current} documentId={documentId} bookmark={bookmark} onCite={onCite} onBindReady={handler=>{binder.current=handler}}/>}
+   {documentId&&<ClaimPanel key={`${documentId}:${claimGeneration}`} current={current} documentId={documentId} bookmark={bookmark} onCite={onCite} requirementTarget={requirementTarget} onCiteRequirement={onCiteRequirement} onBindReady={handler=>{binder.current=handler}}/>}
   <p>仅查询当前项目内有权的真实来源；发现页标题和模型常识不是证据。检索可能不完整。</p>
   <div className="knowledge-controls"><label>上下文文档 ID<input aria-label="上下文文档 ID" value={contextId} readOnly={!!documentId} onChange={e=>{reset();setContextId(e.target.value)}} placeholder="当前项目文档 UUID"/></label>
    <label>关键词或精确标识符<input aria-label="知识查询" value={query} maxLength={128} onChange={e=>{reset();setQuery(e.target.value)}} onKeyDown={e=>{if(e.key==='Enter')submit()}}/></label>

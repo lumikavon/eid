@@ -197,7 +197,7 @@ def test_history_is_scoped_to_current_read_grant_and_document_owner(monkeypatch)
                 def fetchall(self):
                     prior = ast()
                     return [{"id": uuid4(), "revision": revision, "base_version_id": VERSION,
-                             "content_hash": content_hash(prior), "ast": prior, "created_by": ACTOR,
+                                 "content_hash": content_hash(prior), "ast": prior, "created_by": ACTOR, "ai_patch": False,
                              "created_at": datetime.now(timezone.utc)} for revision in range(51, 0, -1)]
             return Result()
     page = editor_repository.list_versions(Connection(), "subject", WORKSPACE, DOCUMENT)

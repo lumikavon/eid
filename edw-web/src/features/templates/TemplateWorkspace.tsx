@@ -2,7 +2,7 @@ import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {useLocation,useNavigate} from 'react-router-dom';
 import type {WorkspaceAccess} from '../../app/access-api';
-import {createDocument,getDocument,getTemplateDetail,getTemplates,getTypeCatalog,TemplateError,templateScopes,type CreateDocument,type DocumentType,type TemplateCard,type TemplateFilters,type TemplateScope} from './template-api';
+import {createDocument,getDocument,getDocumentVersion,getTemplateDetail,getTemplates,getTypeCatalog,TemplateError,templateScopes,type CreateDocument,type DocumentType,type TemplateCard,type TemplateFilters,type TemplateScope} from './template-api';
 import DomainEditor from './DomainEditor';
 import SectionGeneration from './SectionGeneration';
 import CopilotPanel from './CopilotPanel';
@@ -21,19 +21,23 @@ const clearTemplateQueries=(cache:ReturnType<typeof useQueryClient>)=>{
  for(const queryKey of [['template-catalog'],['template-list'],['template-detail'],['template-document']]){void cache.cancelQueries({queryKey});cache.removeQueries({queryKey})}
 };
 function DocumentView({current,documentId,onReject,onRefresh,onRegisterNavigationGuard,onNavigateTo}:Props&{documentId:string}){
+  const location=useLocation();
+  const pinnedVersion=new URLSearchParams(location.search).get('version');
  const navigate=useNavigate();const cache=useQueryClient();const base=`/workspaces/${current.workspace_id}`;const scope=contextKey(current);
  const [blocked,setBlocked]=useState(false);const handled=useRef<unknown>(null);
   const backRef=useRef<()=>void>(()=>navigate(`${base}/documents`));
   const blockRef=useRef<(sectionId:string,blockId:string)=>void>(()=>{});
- const document=useQuery({queryKey:['template-document',scope,documentId],queryFn:({signal})=>getDocument(current,documentId,signal),retry:false,gcTime:0,enabled:!blocked});
+ const document=useQuery({queryKey:['template-document',scope,documentId,pinnedVersion??'head'],queryFn:({signal})=>pinnedVersion?getDocumentVersion(current,documentId,pinnedVersion,signal):getDocument(current,documentId,signal),retry:false,gcTime:0,enabled:!blocked});
  const fatal=document.error instanceof TemplateError&&protectedFailure(document.error)?document.error:null;
  useLayoutEffect(()=>{if(!fatal||handled.current===fatal)return;handled.current=fatal;setBlocked(true);if(fatal.failure==='authentication')onReject(fatal);else onRefresh()},[fatal,onReject,onRefresh]);
  useEffect(()=>{if(blocked)clearTemplateQueries(cache)},[blocked,cache]);
- const value=!blocked&&!fatal?document.data:undefined;
+  const value=!blocked&&!fatal?document.data:undefined;
+  useEffect(()=>{const params=new URLSearchParams(location.search);const section=params.get('section');const block=params.get('block');if(value&&section&&block){if(pinnedVersion)window.document.getElementById(`pinned-${section}-${block}`)?.scrollIntoView({block:'center'});else blockRef.current(section,block)}},[value,location.search,pinnedVersion]);
+  if(value&&pinnedVersion)return <div className="template-document"><header className="page-header"><h1>{value.name} · 固定版本 v{value.revision}</h1><button className="btn" onClick={()=>navigate(`${base}/documents/${documentId}`)}>读取当前版本</button></header><p>版本 {value.version_id} · 只读来源快照，当前授权已重新核验。</p>{value.ast.document.sections.map(section=><section key={section.id}><h2>{section.title}</h2>{section.blocks.map((raw,index)=>{const block=raw as {id:string;type:string;content:Record<string,unknown>};return <article id={`pinned-${section.id}-${block.id}`} key={block.id??index}><h3>{block.type} · {block.id}</h3><pre>{JSON.stringify(block.content,null,2)}</pre></article>})}</section>)}</div>;
   return <div className="template-document" data-testid="template-document"><header className="page-header"><div><h1>{value?.name??'文档初始结构'}</h1><p>文档 ID：{documentId}</p></div><span className="grow"/><button className="btn" onClick={()=>backRef.current()}>返回项目文档</button></header>
    {value?.document_type==='technical_solution'&&<p className="template-state">技术方案：核对固定模板版本与必需章节，确认项目上下文及大纲，选取当前授权证据 Pack，逐章接受提案，再审校参数、架构 Claim 和标准适用性。未经证实的数字与标准留作待确认。</p>}
   {blocked||fatal?<div className="template-state" role="alert"><p>{errorText(fatal??document.error??new Error('当前权限已变化，请重新读取'))}</p><button className="btn" onClick={()=>{setBlocked(false);void document.refetch()}}>重新读取</button></div>:document.isFetching||document.isPending?<p className="template-state" role="status">正在读取当前授权文档…</p>:document.error?<div className="template-state" role="alert"><p>{errorText(document.error)}</p><button className="btn" onClick={()=>void document.refetch()}>重新读取</button></div>:null}
-   {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onRegisterBlockNavigation={handler=>{blockRef.current=handler??(()=>{})}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
+   {value&&<DomainEditor key={value.id} current={current} value={value} onReject={onReject} onRefresh={onRefresh} onRegisterBack={handler=>{backRef.current=handler}} onRegisterBlockNavigation={handler=>{blockRef.current=handler??(()=>{})}} onNavigateBack={()=>navigate(`${base}/documents`)} onConfirmed={saved=>cache.setQueryData(['template-document',scope,documentId,'head'],saved)} onRegisterNavigationGuard={onRegisterNavigationGuard} onNavigateTo={onNavigateTo}/>}
   {value&&<SectionGeneration key={value.version_id} current={current} document={value} onReject={onReject}/>}
   {value&&<CopilotPanel key={`copilot:${value.version_id}`} current={current} document={value}/>}
    {value&&<ReviewStatus key={`review:${value.version_id}`} current={current} document={value} onNavigateToBlock={(sectionId,blockId)=>blockRef.current(sectionId,blockId)} onDocumentChanged={()=>void document.refetch()}/>}

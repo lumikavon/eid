@@ -14,7 +14,7 @@ def test_pinned_policy_context_and_citation_identity_affect_review_input():
     assert 'source_safe(conn, workspace_id, anchor, job[' in routes
     assert 'citations=fresh_citations' in routes
     assert 'citations=(), stale_sources=fresh_citations' in routes
-    assert "content_hash(structure) != job['template_hash']" in routes
+    assert "content_hash(fresh_structure) != job['template_hash']" in routes
     baseline = input_hash([], [{'key': '吞吐', 'value': '100', 'confirmed': True}], [])
     assert baseline != input_hash([], [{'key': '吞吐', 'value': '200', 'confirmed': True}], [])
 

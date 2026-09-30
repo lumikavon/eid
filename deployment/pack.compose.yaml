@@ -1,0 +1,26 @@
+name: eid-openeuler-pack
+services:
+  pack:
+    image: openeuler/openeuler:24.03-lts-sp2
+    network_mode: none
+    read_only: true
+    user: "0:0"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=67108864"]
+    volumes:
+      - "${EID_CANDIDATE_DIR:?Set the verified candidate directory}:/candidate:ro"
+      - "${EID_PACKAGE_DIR:?Set a new output directory}:/output"
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - >-
+        test "$$(uname -m)" = x86_64 &&
+        grep -q 'openEuler' /etc/os-release &&
+        grep -q 'LTS-SP2' /etc/os-release &&
+        cd /candidate && sha256sum -c SOURCE.sha256 &&
+        test ! -e /output/eid-candidate.tar.gz &&
+        cp /etc/os-release /output/pack-os-release.txt &&
+        tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -czf /output/eid-candidate.tar.gz . &&
+        cp SOURCE.sha256 /output/SOURCE.sha256 &&
+        cp SOURCE.json /output/SOURCE.json &&
+        cd /output && sha256sum eid-candidate.tar.gz > ARTIFACT.sha256

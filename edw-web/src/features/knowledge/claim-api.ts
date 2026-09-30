@@ -24,9 +24,12 @@ export async function getTrace(current:WorkspaceAccess,documentId:string,claimId
 }
 export async function extractClaims(current:WorkspaceAccess,documentId:string,signal:AbortSignal){return call(current,documentId,'/claims/extract',signal,{})}
 export async function declareClaim(current:WorkspaceAccess,documentId:string,body:Bookmark&{claim_type:string;conditions:string;value:string;unit:string;critical:boolean},signal:AbortSignal){
- const {selected_text:_,...command}=body;return call(current,documentId,'/claims',signal,command);
+ const command=Object.fromEntries(Object.entries(body).filter(([key])=>key!=='selected_text'));return call(current,documentId,'/claims',signal,command);
 }
 export async function bindClaim(current:WorkspaceAccess,documentId:string,claimId:string,body:{base_version_id:string;revision:number;pack_id:string;item_ordinal:number;relation:'supports'|'conflicts'|'contextual';quoted_text:string},signal:AbortSignal){return call(current,documentId,`/claims/${claimId}/links`,signal,body)}
 export async function citeClaim(current:WorkspaceAccess,documentId:string,body:Bookmark&{claim_id:string;link_id:string;quoted_text:string},signal:AbortSignal):Promise<DocumentData>{
- return document(await call(current,documentId,'/citations',signal,body),current,documentId);
+  return document(await call(current,documentId,'/citations',signal,body),current,documentId);
+}
+export async function citeRequirement(current:WorkspaceAccess,documentId:string,body:{base_version_id:string;revision:number;section_id:string;block_id:string;claim_id:string;link_id:string;quoted_text:string},signal:AbortSignal):Promise<DocumentData>{
+ return document(await call(current,documentId,'/requirements/citations',signal,body),current,documentId);
 }

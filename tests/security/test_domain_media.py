@@ -33,7 +33,7 @@ def test_bounded_image_is_reencoded_to_private_png_without_original_bytes(kind):
 
 @pytest.mark.parametrize("payload", ["not-base64", base64.b64encode(b"<svg/>").decode(),
                                       base64.b64encode(b"not an image").decode(),
-                                      "A" * 7_000_001])
+                                      "A" * 7_000_001], ids=['base64-invalid', 'svg', 'not-image', 'oversized'])
 def test_invalid_or_oversized_media_rejects_without_receipt(payload):
     with pytest.raises(ApiError) as error:
         prepare_image(payload)

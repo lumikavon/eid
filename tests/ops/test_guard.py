@@ -205,7 +205,7 @@ def test_service_source_mutation_invalidates_only_affected_runtime_images(
             service = args[2].removeprefix("container-")
             return json.dumps(
                 [{
-                    "Image": image_ids[service],
+                    "Image": image_ids[guard.APPLICATION_IMAGE_SOURCE[service]],
                     "State": {"Running": True, "Health": {"Status": "healthy"}},
                     "Config": {"Labels": {"io.eid.owner": "owner"}},
                 }]
@@ -494,16 +494,21 @@ def test_s3_configuration_has_distinct_exact_least_privilege_identities():
     verify_s3_configuration()
     payload = json.loads(guard.S3_CONFIG.read_text(encoding="utf-8"))
     identities = {identity["name"]: identity for identity in payload["identities"]}
-    assert set(identities) == {"eid-s3-bootstrap", "eid-s3-api", "eid-s3-worker"}
+    assert set(identities) == {"eid-s3-bootstrap", "eid-s3-api", "eid-s3-worker",
+                               "eid-s3-attachment-api", "eid-s3-attachment-worker", "eid-s3-cleaner"}
     assert identities["eid-s3-bootstrap"]["actions"] == [
         "Admin",
         "Read:eid-local-artifacts",
+        "Read:eid-local-attachment-quarantine",
     ]
-    assert identities["eid-s3-api"]["actions"] == ["Read:eid-local-artifacts"]
+    assert identities["eid-s3-api"]["actions"] == ["Read:eid-local-artifacts", "Write:eid-local-artifacts"]
     assert identities["eid-s3-worker"]["actions"] == ["Read:eid-local-artifacts"]
+    assert identities['eid-s3-attachment-api']['actions'] == ['Read:eid-local-attachment-quarantine', 'Write:eid-local-attachment-quarantine']
+    assert identities['eid-s3-attachment-worker']['actions'] == ['Read:eid-local-attachment-quarantine']
+    assert identities['eid-s3-cleaner']['actions'] == ['Read:eid-local-attachment-quarantine', 'Write:eid-local-attachment-quarantine']
     credentials = [identity["credentials"][0] for identity in identities.values()]
-    assert len({credential["accessKey"] for credential in credentials}) == 3
-    assert len({credential["secretKey"] for credential in credentials}) == 3
+    assert len({credential["accessKey"] for credential in credentials}) == 6
+    assert len({credential["secretKey"] for credential in credentials}) == 6
 
 
 def test_s3_guard_exercises_runtime_head_bucket_and_read_only_denials(monkeypatch):
@@ -517,7 +522,7 @@ def test_s3_guard_exercises_runtime_head_bucket_and_read_only_denials(monkeypatc
 
         def list_buckets(self):
             calls.append((self.role, "list-buckets"))
-            return {"Buckets": [{"Name": guard.EXPECTED["bucket"]}]}
+            return {"Buckets": [{"Name": guard.EXPECTED[key]} for key in ('bucket', 'attachment_bucket')]}
 
         def list_objects_v2(self, *, Bucket, MaxKeys):
             calls.append((self.role, "list-objects", Bucket, MaxKeys))
@@ -535,7 +540,7 @@ def test_s3_guard_exercises_runtime_head_bucket_and_read_only_denials(monkeypatc
 
         def head_bucket(self, *, Bucket):
             calls.append((self.role, "head", Bucket))
-            if Bucket != guard.EXPECTED["bucket"]:
+            if self.role != 'bootstrap' and Bucket != guard.EXPECTED["bucket"]:
                 raise ClientError(
                     {"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}},
                     "HeadBucket",
@@ -939,7 +944,7 @@ def test_storage_checks_owned_s3_port_before_first_request(monkeypatch):
     class Client:
         def list_buckets(self):
             calls.append("list")
-            return {"Buckets": [{"Name": "eid-local-artifacts"}]}
+            return {"Buckets": [{"Name": "eid-local-artifacts"}, {"Name": "eid-local-attachment-quarantine"}]}
 
         def head_bucket(self, *, Bucket):
             calls.append(("head", Bucket))
@@ -985,6 +990,7 @@ def test_storage_checks_owned_s3_port_before_first_request(monkeypatch):
         "keycloak",
         "s3-config",
         "list",
+        ("head", "eid-local-attachment-quarantine"),
         ("head", "eid-local-artifacts"),
         "post-full-guard",
     ]
@@ -1082,6 +1088,8 @@ def test_storage_creates_only_from_empty_inventory_then_runs_full_guard(monkeypa
         "list",
         "create-rabbit-runtime",
         ("create", "eid-local-artifacts"),
+        ("create", "eid-local-attachment-quarantine"),
+        ("head", "eid-local-attachment-quarantine"),
         ("head", "eid-local-artifacts"),
         "post-full-guard",
     ]
@@ -1127,7 +1135,7 @@ def test_storage_rejects_mixed_or_foreign_inventory_without_writing(monkeypatch)
     )
     monkeypatch.setenv("EID_MIGRATION_DATABASE_URL", "guarded")
 
-    with pytest.raises(RuntimeError, match="必须为空或仅包含"):
+    with pytest.raises(RuntimeError, match="包含非本项目 bucket"):
         storage.main()
 
     assert calls == ["list"]
@@ -1639,10 +1647,10 @@ def test_runtime_image_collection_rechecks_earlier_containers(monkeypatch, drift
     monkeypatch.setattr(guard, "infrastructure_images", lambda: {"postgres": "postgres:17.6"})
     monkeypatch.setattr(guard, "source_fingerprint", lambda service: fingerprint)
     collected = set()
-    all_services = set(services) | {"postgres"}
+    all_services = set(guard.APPLICATION_IMAGE_SOURCE) | {"postgres"}
     lookups = {service: 0 for service in all_services}
     inspected = set()
-    monkeypatch.setattr(guard, "_recorded_owner_nonce", lambda: "other-owner" if drift == "owner-record" and len(collected) == len(all_services) else "owner")
+    monkeypatch.setattr(guard, "_recorded_owner_nonce", lambda: "other-owner" if drift == "owner-record" and len(inspected) == len(all_services) else "owner")
 
     def fake_command(*args):
         if args[1:3] == ("image", "inspect"):
@@ -1765,7 +1773,7 @@ def test_runtime_image_manifest_binds_source_image_and_healthy_container(monkeyp
             return json.dumps(
                 [
                     {
-                        "Image": image_ids[services[service]],
+                        "Image": image_ids[services[guard.APPLICATION_IMAGE_SOURCE[service]]],
                         "State": {"Running": True, "Health": {"Status": "healthy"}},
                     "Config": {"Labels": {"io.eid.owner": "owner"}},
                     }
@@ -1896,7 +1904,7 @@ def test_pinned_infrastructure_runtime_image_drift_is_rejected(monkeypatch, chan
 
     monkeypatch.setattr(guard, "command", command)
     records = guard.current_runtime_images()
-    assert set(records) == set(applications) | set(infrastructure)
+    assert set(records) == set(guard.APPLICATION_IMAGE_SOURCE) | set(infrastructure)
     assert records[changed_service] == {"image_ref": infrastructure[changed_service], "image_id": image_id, "container_id": f"container-{changed_service}"}
     drift = True
     with pytest.raises(IsolationError, match="运行容器未使用当前构建镜像 ID"):

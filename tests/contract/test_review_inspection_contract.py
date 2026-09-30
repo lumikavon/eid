@@ -9,7 +9,7 @@ def test_filter_validation_and_combination_contract():
     import inspect
     sql_source = inspect.getsource(filtered_issues)
     assert 'severity=%s' in sql_source and 'section_id=%s::uuid' in sql_source
-    assert 'quote ILIKE' in sql_source and 'ORDER BY created_at,id LIMIT %s OFFSET %s' in sql_source
+    assert 'quote ILIKE' in sql_source and 'ORDER BY i.created_at,i.id LIMIT %s OFFSET %s' in sql_source
 
 
 def test_issue_locator_and_revoked_excerpt_contract():

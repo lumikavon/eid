@@ -61,7 +61,7 @@ def current(conn, subject, workspace_id, document_id, *, review=False):
 
 
 def source_safe(conn, workspace_id, anchor, subject, citations):
-    from ..knowledge.governance import local_source
+    from ..knowledge.governance import local_source, decorate
     for citation in citations:
         if citation['needs_review'] or citation['chain'] != 'attachment':
             raise ApiError(409, 'REVIEW_SOURCE_CHANGED', '引用来源需要重新核验')
@@ -86,10 +86,13 @@ def source_safe(conn, workspace_id, anchor, subject, citations):
             raise ApiError(409, 'REVIEW_SOURCE_CHANGED', '引用来源需要重新核验') from exc
         if text != citation['excerpt'] or citation['quoted_text'] not in text:
             raise ApiError(409, 'REVIEW_SOURCE_CHANGED', '引用来源需要重新核验')
+        governed = decorate(conn, anchor, [dict(hit)], workspace_id)
+        if not governed or any(g.get('conflict_id') for g in governed[0].get('governance', [])):
+            raise ApiError(409, 'REVIEW_SOURCE_CHANGED', '引用来源需要重新核验')
 
 
 def citation_rows(conn, workspace_id, document_id, version_id):
-    return conn.execute('''SELECT c.section_id,c.block_id,c.selected_text,c.needs_review,
+    return conn.execute('''SELECT c.id,c.section_id,c.block_id,c.selected_text,c.needs_review,
         l.source_id,l.source_version,l.chain,l.chunk_hash,l.locator,l.quoted_text,l.item_ordinal,
         i.excerpt,p.content,p.content_hash AS pack_hash FROM document_citation c JOIN claim_evidence_link l
         ON l.id=c.link_id AND l.workspace_id=c.workspace_id
@@ -124,7 +127,7 @@ def snapshot(conn, subject, workspace_id, document_id, version_id, ast):
 
 
 def source_snapshot(citations):
-    return [{key: row[key] for key in ('section_id', 'block_id', 'selected_text', 'needs_review',
+    return [{key: row[key] for key in ('id', 'section_id', 'block_id', 'selected_text', 'needs_review',
             'source_id', 'source_version', 'chain', 'chunk_hash', 'locator', 'quoted_text',
             'item_ordinal', 'excerpt')} for row in citations]
 
@@ -188,7 +191,7 @@ def issue_filters(severity, section_id, status, keyword):
     return severity, section_id, status, keyword.strip() or None if keyword else None
 
 
-def filtered_issues(conn, run_id, filters, *, sources_current, current_version_id=None, offset=0, limit=100):
+def filtered_issues(conn, run_id, filters, *, sources_current, citations=(), current_version_id=None, offset=0, limit=100):
     severity, section_id, status, keyword = filters
     # The keyword predicate must use exactly the same safe fields as issue_view.
     # Source-linked quotes are excluded here; their authorization is checked per issue later.
@@ -199,11 +202,16 @@ def filtered_issues(conn, run_id, filters, *, sources_current, current_version_i
              WHEN d.action='handled' THEN 'HANDLED' WHEN d.action='reject' THEN 'REJECTED'
              WHEN d.action='modify' THEN 'MODIFY' WHEN d.action='accept' THEN 'PENDING_RECHECK'
              END,'OPEN')=%s)
-        AND (%s::text IS NULL OR ((%s::boolean AND i.source_id IS NULL AND i.quote ILIKE '%%' || %s || '%%')
+        AND (%s::text IS NULL OR ((%s::boolean AND (i.source_id IS NULL OR EXISTS
+              (SELECT 1 FROM jsonb_to_recordset(%s::jsonb) AS c(source_id text,section_id uuid,block_id uuid)
+               WHERE c.source_id=i.source_id AND c.section_id=i.section_id AND c.block_id=i.block_id))
+              AND i.quote ILIKE '%%' || %s || '%%')
              OR i.impact ILIKE '%%' || %s || '%%' OR i.suggestion ILIKE '%%' || %s || '%%'
              OR i.rule_id ILIKE '%%' || %s || '%%'))'''
     params = (run_id, severity, severity, section_id, section_id, status, current_version_id, status,
-               keyword, sources_current, keyword, keyword, keyword, keyword)
+               keyword, sources_current, Jsonb([{'source_id': str(c['source_id']),
+                   'section_id': str(c['section_id']), 'block_id': str(c['block_id'])} for c in citations]),
+               keyword, keyword, keyword, keyword)
     tables = ''' FROM review_issue i LEFT JOIN LATERAL
         (SELECT * FROM review_disposition WHERE issue_id=i.id ORDER BY (action='handled') DESC,created_at DESC,id DESC LIMIT 1)
         d ON true LEFT JOIN review_run rr ON rr.id=d.recheck_run_id '''
@@ -286,7 +294,7 @@ def version_comparison(pinned, current_ast):
 def same_defect(issue, other):
     return (issue['category'] == other['category'] and issue['rule_id'] == other['rule_id']
             and issue['section_id'] == other['section_id'] and issue['block_id'] == other['block_id']
-            and issue['claim_id'] == other['claim_id'])
+            and ((issue.get('details') or {}).get('field') == (other.get('details') or {}).get('field')))
 
 
 def disposition_digest(command):
@@ -361,7 +369,7 @@ def disposition(conn, subject, workspace_id, document_id, run_id, issue_id, comm
                                  initial, views, None)
         patch_id, result_id, result_revision = patch['data']['id'], patch['data']['version_id'], patch['data']['revision']
     if command.action == 'handled':
-        if earlier and earlier[0]['action'] != 'accept':
+        if earlier and earlier[0]['action'] not in ('accept', 'modify'):
             raise ApiError(409, 'REVIEW_ALREADY_DISPOSED', '既有决议保持未解决；须对新审校问题作出处置')
         if earlier and earlier[0]['action'] == 'accept' and (
                 row['document_version_id'] == head['head_version_id'] or
@@ -470,6 +478,23 @@ def execute(settings, workspace_id, document_id, run_id):
                 sources_current = True
                 outcomes, issues = inspect(head['ast'], fresh_structure, fresh_claims,
                     project_facts=fresh_facts, citations=fresh_citations)
+                if head['ast']['document']['metadata']['document_type'] == 'test_plan':
+                    from ..documents.traceability import coverage
+                    trace = coverage(conn, job['subject'], workspace_id, head['ast'], document_id, head['head_version_id'])
+                    defects = [*trace['unlinked'],
+                               *(link for link in trace['links'] if link['state'] != 'current'),
+                               *(entry for entry in trace['requirements'] if entry['state'] != 'covered')]
+                    for defect in defects:
+                        # Baseline locators belong to a different document. Keep them
+                        # in details; never present them as blocks of this test plan.
+                        external = 'document_id' in defect
+                        issues.append({'id': str(uuid4()), 'category': 'requirement',
+                            'rule_id': 'test_coverage_' + defect.get('state', 'unlinked'), 'severity': 'high',
+                            'section_id': None if external else defect['section_id'],
+                            'block_id': None if external else defect['block_id'],
+                            'claim_id': None, 'source_id': None, 'quote': '测试追踪待核验',
+                            'impact': '需求覆盖缺失、冗余或版本/阈值不一致',
+                            'suggestion': '核对当前基线与测试链，不替换批准阈值', 'details': defect})
             except ApiError as exc:
                 if exc.code != 'REVIEW_SOURCE_CHANGED':
                     raise
@@ -603,9 +628,14 @@ def create_router(settings, verify):
                 current_actor.subject, workspace_id, document_id, results)
             ast, sources_current, citations = inspection(conn, row, head, current_actor.subject, workspace_id, document_id)
             issues, total = filtered_issues(conn, run_id, filters, sources_current=sources_current,
+                                             citations=citations,
                                             current_version_id=head['head_version_id'], offset=offset)
             visible = [issue_view(item, ast, sources_current=sources_current, citations=citations,
-                                   current_version_id=head['head_version_id']) for item in issues]
+                                    current_version_id=head['head_version_id']) for item in issues]
+            coverage_metric = {'numerator': None, 'denominator': None, 'state': 'unevaluated'}
+            if payload['current_eligible'] and ast['document']['metadata']['document_type'] == 'test_plan':
+                from ..documents.traceability import coverage
+                coverage_metric = coverage(conn, current_actor.subject, workspace_id, ast, document_id, row['document_version_id'])
             # A ratio is defined only for this concrete, bounded result set's count, not a quality score.
             return {'data': {**payload, 'results': [dict(item) for item in results],
                              'issues': visible, 'issue_count': total, 'returned_count': len(visible),
@@ -617,8 +647,7 @@ def create_router(settings, verify):
                                                          'state': 'count'},
                                          'score': {'numerator': None, 'denominator': None,
                                                    'state': 'unevaluated'},
-                                         'coverage': {'numerator': None, 'denominator': None,
-                                                      'state': 'unevaluated'}},
+                                          'coverage': coverage_metric},
                              'version': {'id': row['document_version_id'], 'revision': row['document_revision'],
                                          'current_id': head['head_version_id'], 'current_revision': head['revision'],
                                          'comparison': version_comparison(ast, head['ast'])}}}

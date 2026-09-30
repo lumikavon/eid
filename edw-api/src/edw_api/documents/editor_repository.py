@@ -104,6 +104,8 @@ def save_document(conn, subject, workspace_id, document_id, command, request_id,
                                  controlled_citation=controlled_citation)
     except InvalidAst as exc:
         raise ApiError(422, "INVALID_DOCUMENT_AST", str(exc)) from exc
+    from .traceability import validate_links, project
+    validate_links(conn, subject, workspace_id, document_id, ast, previous['ast'])
     media = conn.execute(
         "SELECT id,width,height FROM document_media WHERE document_id=%s AND workspace_id=%s "
         "AND id=ANY(%s::uuid[])",
@@ -160,6 +162,7 @@ def save_document(conn, subject, workspace_id, document_id, command, request_id,
     )
     from .claims import extract_claims
     extract_claims(conn, workspace_id, document_id, version_id, ast)
+    project(conn, workspace_id, document_id, version_id, ast)
     # Old version findings remain for provenance, but cannot certify the new head.
     conn.execute("UPDATE document_claim SET needs_review=true WHERE workspace_id=%s AND document_id=%s AND document_version_id<>%s", (workspace_id, document_id, version_id))
     conn.execute("UPDATE document_citation SET needs_review=true WHERE workspace_id=%s AND document_id=%s AND document_version_id<>%s", (workspace_id, document_id, version_id))

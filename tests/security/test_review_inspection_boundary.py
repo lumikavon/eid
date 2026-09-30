@@ -9,7 +9,7 @@ def test_history_and_issue_detail_recheck_current_access_and_pinned_run():
     assert "WHERE run_id=%s AND id=%s" in source
     assert 'source_safe(conn, workspace_id, anchor, subject, citations)' in source
     assert "'score': {'numerator': None, 'denominator': None" in source
-    assert "'coverage': {'numerator': None, 'denominator': None" in source
+    assert "'coverage': coverage_metric" in source
 
 
 def test_ui_discards_cross_run_and_cross_filter_selection():

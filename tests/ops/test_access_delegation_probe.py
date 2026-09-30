@@ -247,12 +247,14 @@ def test_explicit_invalid_environment_never_falls_back_to_local(monkeypatch, bro
 @pytest.fixture
 def local_probe(monkeypatch, broker):
     applications = {name: name + ":1.0.0" for name in ("api", "worker", "web")}
+    runtime_applications = {service: applications[source]
+                            for service, source in guard.APPLICATION_IMAGE_SOURCE.items()}
     infrastructure = {name: name + ":1.0.0" for name in (
         "postgres", "keycloak", "rabbitmq", "redis", "seaweedfs", "nginx")}
     services = {name: {"image_ref": reference, "image_id": "sha256:" + "a" * 64,
                        "container_id": name + "-container"}
-                for name, reference in (applications | infrastructure).items()}
-    for name in applications:
+                for name, reference in (runtime_applications | infrastructure).items()}
+    for name in runtime_applications:
         services[name]["source_fingerprint"] = "sha256:" + "b" * 64
     manifest = {"schema_version": 2, "source_fingerprint_algorithm": "sha256",
                 "services": services}

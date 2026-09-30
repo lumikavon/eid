@@ -39,7 +39,7 @@ def test_historical_link_traces_against_current_scope(monkeypatch):
     def connection(_settings):
         yield Conn()
 
-    monkeypatch.setattr(db, 'connection', connection)
+    monkeypatch.setattr(claim_routes, 'connection', connection)
     monkeypatch.setattr(claim_routes, 'checked', lambda *_: (None, {'kind': 'document'}, context))
     monkeypatch.setattr(claim_routes, 'scope', lambda *_: ({'project_id': 'p'}, context, state))
     monkeypatch.setattr(claim_routes, 'pinned', lambda *_: (_ for _ in ()).throw(AssertionError('old head')))

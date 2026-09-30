@@ -278,8 +278,10 @@ def render_compose(config, owner, files):
         require(not any(key in service for key in ("container_name", "network_mode", "privileged",
                 "devices", "volumes_from", "env_file", "extends", "networks", "pid", "ipc",
                 "uts", "userns_mode", "cgroup", "cap_add", "device_cgroup_rules",
-                "security_opt")),
+                )),
                 f"Unsupported isolation-affecting service configuration: {service_name}")
+        require(service.get('security_opt', []) in ([], ['no-new-privileges:true']),
+                f"Unsupported isolation-affecting security options: {service_name}")
         # Pin the namespace independently of the remote Docker daemon's default.
         service["cgroup"] = "private"
         service["labels"] = dict(labels)
@@ -315,8 +317,21 @@ def render_compose(config, owner, files):
                                                 "labels": dict(labels)}
     require("networks" not in compose, "Unexpected base network configuration")
     compose["networks"] = {"default": {"name": project + "_default", "labels": dict(labels)}}
-    result = yaml.safe_dump(compose, sort_keys=False, allow_unicode=True)
-    require(not re.search(r"\$(?:[A-Za-z_]|\{)", result.replace("$$", "")),
+    result = yaml.safe_dump(compose, sort_keys=False, allow_unicode=True, width=4096)
+    # Secrets remain runtime inputs, never materialized in the source package.
+    runtime_inputs = {
+        'EID_BGE_M3_ENDPOINT', 'EID_RERANKER_ENDPOINT', 'EID_KNOWLEDGE_GATEWAY_URL',
+        'EID_KNOWLEDGE_GATEWAY_KEY', 'EID_MODEL_INTERNAL_ENDPOINT', 'EID_MODEL_INTERNAL_KEY',
+        'EID_MODEL_EXTERNAL_ENDPOINT', 'EID_MODEL_EXTERNAL_KEY', 'EID_MODEL_EXTERNAL_APPROVED_HOST',
+    }
+    allowed = {f'${{{name}:-}}' for name in runtime_inputs} | {
+        '${EID_EVIDENCE_WAKE_KEY:?Set a unique 32+ character API-worker wake key}',
+        '${EID_MODEL_WAKE_KEY:?Set a unique 32+ character model wake key}',
+    }
+    checked_result = result.replace('$$', '')
+    for placeholder in allowed:
+        checked_result = checked_result.replace(placeholder, '')
+    require(not re.search(r"\$(?:[A-Za-z_]|\{)", checked_result),
             "Unresolved Compose interpolation is forbidden")
     return result.encode("utf-8")
 

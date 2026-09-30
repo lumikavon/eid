@@ -8,15 +8,17 @@ import type {WorkspaceAccess} from '../../app/access-api';
 import {getDocument,getImage,saveDocument,uploadImage,TemplateError,type DocumentData,type SaveTiming} from './template-api';
 import {sameDomainValue} from './domain-merge';
 import VersionHistory from './VersionHistory';
+import TestTraceEditor from './TestTraceEditor';
 import ProjectContext from './ProjectContext';
 import OutlineEditor from './OutlineEditor';
 import KnowledgePanel from '../knowledge/KnowledgePanel';
-import {citeClaim,type Bookmark} from '../knowledge/claim-api';
+import {citeClaim,citeRequirement,type Bookmark} from '../knowledge/claim-api';
 import {registerDocumentHistoryGuard} from './navigation-guard';
 import {DomainAtom,DomainHeading,DomainParagraph,DomainTable,domainToEditor,editorToDomain,type DomainAst,type DomainSection} from './domain-adapter';
 
 const extensions=[StarterKit.configure({paragraph:false,heading:false,blockquote:false,codeBlock:false,horizontalRule:false,strike:false,code:false,link:{openOnClick:false,autolink:false}}),DomainParagraph,DomainHeading,DomainAtom,TableKit.configure({table:false}),DomainTable,TextAlign.configure({types:['paragraph','heading']}),TextStyleKit];
 const uuid=()=>crypto.randomUUID();
+const prdFields=[['requirement_id','FR-ID'],['name','名称'],['role','角色'],['scenario','场景'],['prerequisites','前置条件'],['normal_flow','正常流程'],['exception_flow','异常流程'],['rules','业务规则'],['inputs','输入'],['outputs','输出'],['permissions','权限'],['nfr','非功能要求'],['acceptance_criteria','验收条件']] as const;
 function SectionCanvas({section,onChange,onEditor,onValidityChange,editable}: {section:DomainSection;onChange:(value:DomainSection)=>void;onEditor:(editor:Editor|null)=>void;onValidityChange:(valid:boolean)=>void;editable:boolean}){
  const source=useRef(section);source.current=section;
  const update=useRef(onChange);update.current=onChange;
@@ -73,6 +75,7 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
  const onContextObserved=useCallback(()=>setContextEpoch(epoch=>epoch+1),[]);
  const [knowledgeOpen,setKnowledgeOpen]=useState(false);
  const [bookmark,setBookmark]=useState<Bookmark|null>(null);
+ const [requirementTarget,setRequirementTarget]=useState<{section_id:string;block_id:string}|null>(null);
  const [outlineOpen,setOutlineOpen]=useState(false);
  const [outlinePending,setOutlinePending]=useState(false);const outlinePendingRef=useRef(false);
  const onOutlinePending=useCallback((pending:boolean)=>{outlinePendingRef.current=pending;setOutlinePending(pending)},[]);
@@ -91,7 +94,9 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
    if(!section?.blocks.some(item=>item.id===blockId)){setStatus('审校块已失效，请重新读取文档和审校');return}
    setActive(sectionId);setTargetBlock(blockId);setStatus('已定位审校块；修改并保存后重新审校');
   });return()=>onRegisterBlockNavigation(null)},[onRegisterBlockNavigation,historyMode,unknown]);
-  useEffect(()=>{if(!editor||!targetBlock||section?.id!==active)return;
+  useEffect(()=>{if(!targetBlock||section?.id!==active)return;
+    if(section.blocks.some(block=>block.id===targetBlock&&block.type==='requirement')){document.getElementById(`requirement-${targetBlock}`)?.scrollIntoView({block:'center'});setTargetBlock('');return}
+    if(!editor)return;
    let found=false;editor.state.doc.descendants((node,pos)=>{if(node.attrs?.blockId===targetBlock){if(node.type.name==='domainAtom')editor.commands.setNodeSelection(pos);else editor.commands.setTextSelection(pos+1);editor.commands.focus();found=true;return false}return true});
    if(found)setTargetBlock('');else setStatus('目标块不在当前编辑画布，需重新读取');
   },[editor,active,section?.id,targetBlock]);
@@ -99,6 +104,7 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
  useEffect(()=>{const warn=(event:BeforeUnloadEvent)=>{if(!dirtyRef.current&&!contextPendingRef.current&&!outlinePendingRef.current)return;event.preventDefault();event.returnValue='' };window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[]);
  useEffect(()=>{
   if(serverVersion.current===value.version_id)return;
+  setRequirementTarget(null);
   serverVersion.current=value.version_id;
   if(dirtyRef.current){setStatus('服务端版本已变化，本地草稿未被替换；请比较版本');setAutoBlocked(true);setHistoryMode('conflict');return}
   setBookmark(null);
@@ -106,8 +112,10 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
   const nextBase={version_id:value.version_id,revision:value.revision};baseRef.current=nextBase;setBase(nextBase);confirmedRef.current=value;setConfirmed(value);
   setActive(refreshed.document.sections[0]?.id??'');setPreview('');setStatus('已重新读取最新版本');
  },[value]);
- const revise=(next:DomainAst)=>{setBookmark(null);draftRef.current=next;setDraft(next);dirtyRef.current=true;setDirty(true);if(!unknown&&historyMode!=='conflict')setAutoBlocked(false);setStatus(online?'尚未保存 · 空闲 1000ms 后自动保存':'离线 · 本地草稿未保存')};
+ const revise=(next:DomainAst)=>{setBookmark(null);setRequirementTarget(null);draftRef.current=next;setDraft(next);dirtyRef.current=true;setDirty(true);if(!unknown&&historyMode!=='conflict')setAutoBlocked(false);setStatus(online?'尚未保存 · 空闲 1000ms 后自动保存':'离线 · 本地草稿未保存')};
  const updateSection=(next:DomainSection)=>revise({...draft,document:{...draft.document,sections:draft.document.sections.map(item=>item.id===next.id?next:item)}});
+ const addRequirement=()=>{if(!section)return;const block={id:uuid(),type:'requirement',content:{statement:'',verification_method:'',source_refs:[],...Object.fromEntries(prdFields.map(([key])=>[key,'']))}};updateSection({...section,blocks:[...section.blocks,block]});setCanvasGeneration(n=>n+1)};
+ const editRequirement=(id:string,key:string,text:string)=>{if(!section)return;updateSection({...section,blocks:section.blocks.map(block=>block.id===id?{...block,content:{...block.content,[key]:text}}:block)});setCanvasGeneration(n=>n+1)};
  const changeTitle=(title:string)=>revise({...draft,document:{...draft.document,metadata:{...draft.document.metadata,title}}});
  const persist=async(mode:'auto'|'explicit'='explicit',debounceMs=0):Promise<boolean>=>{
   if(!dirtyRef.current||savingRef.current||!valid||unknown||historyMode)return false;
@@ -212,6 +220,21 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
   }catch(problem){setBookmark(null);setStatus('引用未确认或来源已失效；请核对文档并重新选择');throw problem}
   finally{savingRef.current=false;setSaving(false)}
  };
+  const citePrdRequirement=async(claimId:string,linkId:string,quotedText:string)=>{
+   const target=requirementTarget;
+   if(!target||dirtyRef.current||savingRef.current||historyMode||unknown)throw Error('需求定位已失效，请重新选择');
+   savingRef.current=true;setSaving(true);
+   try{
+    const result=await citeRequirement(current,value.id,{base_version_id:baseRef.current.version_id,
+     revision:baseRef.current.revision,...target,claim_id:claimId,link_id:linkId,quoted_text:quotedText},new AbortController().signal);
+    setBookmark(null);setRequirementTarget(null);serverVersion.current=result.version_id;confirmedRef.current=result;setConfirmed(result);onConfirmed(result);
+    const saved=result.ast as DomainAst;draftRef.current=saved;setDraft(saved);setCanvasGeneration(n=>n+1);
+    const nextBase={version_id:result.version_id,revision:result.revision};baseRef.current=nextBase;setBase(nextBase);
+    setLastSavedAt(new Date().toISOString());setStatus('PRD 需求来源已绑定当前版本；仍须审校和人工核查');
+   }catch(problem){setRequirementTarget(null);setStatus('需求来源未确认或已失效；请重新核对');throw problem}
+   finally{savingRef.current=false;setSaving(false)}
+  };
+  const selectRequirement=(blockId:string)=>{if(!section||dirtyRef.current||savingRef.current||historyMode||unknown){setStatus('请先保存并核对当前版本，再绑定需求来源');return}setBookmark(null);setRequirementTarget({section_id:section.id,block_id:blockId});setKnowledgeOpen(false);setContextOpen(false);setOutlineOpen(false);setStatus('在当前章节选择 PRD 需求 Claim、证据 Pack，并绑定支持引用')};
  const applyLink=()=>{if(!editor)return;try{const parsed=new URL(link);if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error();editor.chain().focus().setLink({href:parsed.toString()}).run();setLink('')}catch{setStatus('仅支持安全的 HTTP(S) 链接')}};
  return <><div className="editor-layout" data-testid="domain-editor"><section className="editor-main"><div className="doc-top"><b>领域 AST 草稿</b><span>文档版本 {base.version_id}</span><span>修订 {base.revision}</span><span role="status">{status}</span>{lastSavedAt&&<time dateTime={lastSavedAt}>本机确认：{new Date(lastSavedAt).toLocaleTimeString()}</time>}{timing&&<span title="分层保存计时">空闲 {timing.debounce_ms}ms · 客户端请求 {Math.round(timing.client_request_ms)}ms · 服务端 {timing.server_processing_ms===null?'未提供':`${timing.server_processing_ms}ms`}</span>}{unknown&&<button onClick={()=>void reconcile()}>核对原提交</button>}<button onClick={()=>setHistoryMode('history')}>版本历史</button><button onClick={()=>{setContextOpen(open=>!open);setOutlineOpen(false)}} aria-expanded={contextOpen} aria-controls="projectContextPanel">{contextOpen?'收起项目上下文':'检查项目上下文'}</button><button onClick={()=>{setOutlineOpen(open=>!open);setContextOpen(false)}} aria-expanded={outlineOpen} aria-controls="outlinePanel">{outlineOpen?'收起生成前大纲':'编辑生成前大纲'}</button><button onClick={()=>{setKnowledgeOpen(open=>!open);setOutlineOpen(false);setContextOpen(false)}} aria-expanded={knowledgeOpen}>检索授权证据</button><button className="btn primary" disabled={!dirty||saving||!valid||!!unknown||historyMode!==null} onClick={()=>void persist('explicit')}>保存</button></div>
   <fieldset className="doc-toolbar" aria-label="结构化编辑工具栏" disabled={historyMode!==null}>
@@ -224,7 +247,9 @@ export default function DomainEditor({current,value,onReject,onRefresh,onRegiste
    <input aria-label="链接地址" type="url" value={link} onChange={event=>setLink(event.target.value)} placeholder="https://…"/><button onClick={applyLink} disabled={!editor}>设置链接</button>
    <button onClick={()=>editor?.chain().focus().insertTable({rows:2,cols:2,withHeaderRow:false}).run()} disabled={!editor}>插入表格</button>
    <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" style={{display:'none'}} aria-label="选择图片" onChange={event=>{void insertImage(event.target.files?.[0]??null);event.target.value=''}}/><button onClick={()=>fileInput.current?.click()} disabled={!editor}>插入图片</button>
-  </fieldset>
-  <div className="doc-scroll"><article className="paper" aria-label="结构化文档编辑画布"><label htmlFor="docTitle">文档标题</label><input id="docTitle" value={String(draft.document.metadata.title??'')} onChange={event=>changeTitle(event.target.value)} maxLength={256} disabled={historyMode!==null}/>{section&&<section key={`${section.id}:${canvasGeneration}`}><h2>{section.title}</h2><SectionCanvas section={section} onChange={updateSection} onEditor={setEditor} onValidityChange={setValid} editable={historyMode===null}/></section>}</article></div>
+    </fieldset>
+    {section&&['prd','test_plan','technical_requirements'].includes(value.document_type)&&<TestTraceEditor current={current} documentId={value.id} versionId={base.version_id} type={value.document_type} section={section} onChange={next=>{updateSection(next);setCanvasGeneration(n=>n+1)}} disabled={historyMode!==null||saving} onProtected={onReject} onNavigateTo={onNavigateTo} onSelectSource={selectRequirement} baselines={Array.isArray(draft.document.test_baselines)?draft.document.test_baselines:[]} onBaseline={ref=>revise({...draft,document:{...draft.document,test_baselines:[...(Array.isArray(draft.document.test_baselines)?draft.document.test_baselines:[]).filter(old=>JSON.stringify(old)!==JSON.stringify(ref)),ref]}})}/>}
+    {requirementTarget&&<div className="ai-body context-panel"><button onClick={()=>setRequirementTarget(null)}>关闭需求来源</button><KnowledgePanel key={`${requirementTarget.block_id}:${base.version_id}`} current={current} documentId={value.id} compact requirementTarget={requirementTarget} onCiteRequirement={citePrdRequirement} onReject={onReject} onRefresh={onRefresh}/></div>}
+   <div className="doc-scroll"><article className="paper" aria-label="结构化文档编辑画布"><label htmlFor="docTitle">文档标题</label><input id="docTitle" value={String(draft.document.metadata.title??'')} onChange={event=>changeTitle(event.target.value)} maxLength={256} disabled={historyMode!==null}/>{section&&<section key={`${section.id}:${canvasGeneration}`}><h2>{section.title}</h2><SectionCanvas section={section} onChange={updateSection} onEditor={setEditor} onValidityChange={setValid} editable={historyMode===null}/></section>}{value.document_type==='prd'&&section&&<section aria-label="结构化 PRD 需求"><h3>本节结构化需求</h3><p>需求字段随文档版本保存；来源引用须通过当前授权证据绑定并重新审校。</p><button onClick={addRequirement} disabled={historyMode!==null||saving}>新增需求</button>{section.blocks.filter(block=>block.type==='requirement').map(block=><fieldset key={block.id} id={`requirement-${block.id}`}><legend>需求 · {String(block.content.requirement_id||block.id.slice(0,8))}</legend>{prdFields.map(([key,label])=><label key={key}>{label}<textarea value={String(block.content[key]??'')} maxLength={4096} disabled={historyMode!==null||saving} onChange={event=>editRequirement(block.id,key,event.target.value)}/>{!String(block.content[key]??'').trim()&&<small>待补充：{label}</small>}</label>)}<label>需求陈述<textarea value={String(block.content.statement??'')} maxLength={256} onChange={event=>editRequirement(block.id,'statement',event.target.value)} disabled={historyMode!==null||saving}/></label><label>验证方法<textarea value={String(block.content.verification_method??'')} maxLength={2048} onChange={event=>editRequirement(block.id,'verification_method',event.target.value)} disabled={historyMode!==null||saving}/></label><p>来源引用：{Array.isArray(block.content.source_refs)?block.content.source_refs.length:0} 条；请在授权证据流程中绑定。</p><button disabled={dirty||saving||historyMode!==null||!!unknown||!String(block.content.statement??'').trim()} onClick={()=>selectRequirement(block.id)}>选择或更新当前需求来源</button></fieldset>)}</section>}</article></div>
  </section><aside className="ai-side"><div className="ai-tabs"><button className="active" disabled>文档结构</button></div><div className="ai-body" hidden={contextOpen||outlineOpen||knowledgeOpen}><p>内容保存为领域 AST；未知未来节点只读保留。图像仅使用当前授权资源。</p><nav id="docTree" aria-label="文档章节">{draft.document.sections.map(item=><button key={item.id} className={item.id===section?.id?'active':''} onClick={()=>{setBookmark(null);setActive(item.id);setPreview('');setValid(true)}} disabled={!valid&&item.id!==section?.id}>{item.title}</button>)}</nav><p>保存使用 1000ms 空闲防抖；冲突需要逐项确认，不会自动覆盖。</p>{figures.length>0&&<section aria-label="本节图片"><h3>受控图片</h3>{figures.map(block=><button key={block.id} onClick={()=>setPreview(String(block.content.resource_id))}>{String(block.content.alt)}</button>)}{selectedFigure&&<ImagePreview current={current} documentId={value.id} resourceId={preview} alt={String(selectedFigure.content.alt)}/>}</section>}</div>{knowledgeOpen&&<div className="ai-body context-panel"><KnowledgePanel key={`${active}:${base.version_id}`} current={current} documentId={value.id} compact bookmark={bookmark} onCite={cite} onReject={onReject} onRefresh={onRefresh}/></div>}<div id="projectContextPanel" className="ai-body context-panel" hidden={!contextOpen}><ProjectContext current={current} document={confirmed} documentDirty={dirty} onPending={onContextPending} onContextObserved={onContextObserved} onReject={onReject} onRefresh={onRefresh}/></div><div id="outlinePanel" className="ai-body context-panel" hidden={!outlineOpen}><OutlineEditor current={current} document={confirmed} documentDirty={dirty} contextPending={contextPending} contextEpoch={contextEpoch} onPending={onOutlinePending} onReject={onReject} onRefresh={onRefresh}/></div></aside></div>{historyMode&&<VersionHistory current={current} documentId={value.id} base={confirmed} local={draft} mode={historyMode} onMerge={merge} blocked={!!unknown} onReconcile={reconcile} onClose={()=>setHistoryMode(null)} onProtected={error=>{if(error instanceof TemplateError&&error.failure==='authentication')onReject(error);else onRefresh()}}/>}{leaveOpen&&<div className="version-mask"><div role="dialog" aria-modal="true" aria-label="离开未保存草稿" className="version-dialog"><h2>本地草稿尚未保存</h2><p>离开将丢弃内存中的修改。可先保存，若保存失败仍留在此页。{contextPending?'项目上下文仍有未提交输入，请先在检查器保存或明确放弃。':''}{outlinePending?'生成前大纲仍有未提交输入，请先保存或明确放弃。':''}{unknown?'原提交结果未知，离开不能撤销可能已在服务端完成的保存。':''}</p><button onClick={()=>setLeaveOpen(false)}>继续编辑</button><button disabled={saving||!!unknown||!valid||contextPending||outlinePending} onClick={()=>{void persist('explicit').then(ok=>{if(ok){setLeaveOpen(false);leave()}})}}>保存后离开</button><button disabled={saving} onClick={()=>{setLeaveOpen(false);leave()}}>{unknown?'放弃核对并离开（原提交结果未知）':'明确丢弃本地草稿并离开'}</button></div></div>}</>;
 }

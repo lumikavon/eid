@@ -79,7 +79,7 @@
 # Timestamps use MM-DD-YYYY HH:MM.
 
 generated: "09-09-2026 04:44"
-last_updated: "09-29-2026 00:00"
+last_updated: "09-30-2026 00:00"
 project: eid
 project_key: NOKEY
 tracking_system: file-system
@@ -130,7 +130,7 @@ development_status:
   5-2-review-inspection: review # 源码与离线编译/typecheck 完成；测试、迁移、服务及浏览器 not-run
   5-3-issue-disposition: review # 静态/编译/typecheck 完成；测试、迁移、服务与浏览器 not-run
   5-4-technical-solution: review # 本地规则与来源约束源码完成；测试、实际企业标准核验和服务 not-run
-  5-5-prd-composition: backlog
+  5-5-prd-composition: review # 结构化需求与受控来源绑定源码完成；编译/typecheck 通过，测试及运行验收 not-run
   5-6-test-traceability: backlog
   5-7-measurable-requirements: backlog
   epic-5-retrospective: optional

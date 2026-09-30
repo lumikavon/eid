@@ -5,9 +5,9 @@ from uuid import uuid4
 # Order matters: specific expressions precede generic numbers. Unrecognized declared
 # types are accepted by the declare command rather than silently coerced to a known type.
 PATTERNS = (
+    ('acceptance_threshold', r'(?:不低于|不超过|至少|最多|≤|≥)\s*\d+(?:\.\d+)?\s*[\w%/]*'),
     ('percentage', r'(?<!\w)\d+(?:\.\d+)?\s*%'),
     ('date', r'\d{4}[-年/]\d{1,2}[-月/]\d{1,2}日?'),
-    ('acceptance_threshold', r'(?:不低于|不超过|至少|最多|≤|≥)\s*\d+(?:\.\d+)?\s*[\w%/]*'),
     ('capacity', r'\d+(?:\.\d+)?\s*(?:GB|TB|MB|GiB|吨|升|kWh)'),
     ('performance', r'\d+(?:\.\d+)?\s*(?:QPS|TPS|Mbps|Gbps|ms|毫秒)'),
     ('time', r'\d+(?:\.\d+)?\s*(?:小时|分钟|秒|天|h|min|s)\b'),
@@ -38,6 +38,16 @@ def candidates(text):
 def extract_claims(conn, workspace_id, document_id, version_id, ast):
     for section in ast['document']['sections']:
         for block in section['blocks']:
+            if block['type'] == 'requirement' and ast['document']['metadata']['document_type'] in ('prd', 'technical_requirements'):
+                statement = block['content'].get('statement', '')
+                if isinstance(statement, str) and statement.strip() and len(statement) <= 2048:
+                    conn.execute('''INSERT INTO document_claim(id,workspace_id,document_id,document_version_id,
+                        section_id,block_id,start_offset,end_offset,statement,claim_type,conditions,value,unit,
+                        critical,status,needs_review) VALUES (%s,%s,%s,%s,%s,%s,0,%s,%s,'prd_requirement','',%s,'',true,'unsupported',true)
+                        ON CONFLICT (document_version_id,block_id,start_offset,end_offset,claim_type) DO NOTHING''',
+                        (uuid4(), workspace_id, document_id, version_id, section['id'], block['id'],
+                         len(statement), statement, statement[:256]))
+                continue
             if block['type'] not in ('paragraph', 'heading', 'warning', 'code'):
                 continue
             text = block['content']['text']

@@ -11,7 +11,7 @@ from uuid import UUID
 
 
 BLOCK_KINDS = frozenset({"paragraph", "heading", "table", "figure", "diagram",
-                         "requirement", "citation", "warning", "code", "form"})
+                         "requirement", "test_item", "test_case", "acceptance", "citation", "warning", "code", "form"})
 MAX_AST_BYTES = 512 * 1024
 MAX_TEXT = 100_000
 
@@ -136,15 +136,23 @@ def validate_ast(ast, *, expected_template_id, document_type, knowledge_scope,
                 != {key: value for key, value in original_root.items() if key != "document"}):
             raise InvalidAst("Immutable AST envelope changed")
         if ({key: value for key, value in document.items()
-             if key not in {"metadata", "sections", "claims", "citations"}}
+              if key not in {"metadata", "sections", "claims", "citations", "test_baselines"}}
                 != {key: value for key, value in original_document.items()
-                    if key not in {"metadata", "sections", "claims", "citations"}}):
+                     if key not in {"metadata", "sections", "claims", "citations", "test_baselines"}}):
             raise InvalidAst("Immutable document state changed")
         if ({key: value for key, value in metadata.items() if key != "title"}
                 != {key: value for key, value in original_metadata.items() if key != "title"}):
             raise InvalidAst("Immutable document metadata changed")
         original_sections = _array(original_document.get("sections"), 64)
     section_ids, block_ids, media_ids = set(), set(), set()
+    baselines = _array(document.get('test_baselines', []), 128)
+    if baselines and document_type != 'test_plan':
+        raise InvalidAst('Test baselines require a test plan')
+    for baseline in baselines:
+        if set(_object(baseline)) != {'document_id', 'version_id'}:
+            raise InvalidAst('A baseline requires an exact document version')
+        for value in baseline.values():
+            _id(value)
     for index, section in enumerate(sections):
         section = _object(section)
         section_id = _id(section.get("id"))
@@ -187,10 +195,64 @@ def validate_ast(ast, *, expected_template_id, document_type, knowledge_scope,
                 if kind == "paragraph" and content.get("list") not in (None, "bullet", "ordered"):
                     raise InvalidAst("Invalid list style")
             elif kind == "requirement":
-                for field in ("requirement_id", "statement", "verification_method"):
-                    _text(content.get(field), 2048, empty=False)
+                old_block = next((entry for old in original_sections for entry in old['blocks']
+                                  if entry.get('id') == block_id and entry.get('type') == 'requirement'), None)
+                old_content = old_block.get('content', {}) if old_block else {}
+                prd_fields = ("requirement_id", "name", "role", "scenario", "prerequisites",
+                              "normal_flow", "exception_flow", "rules", "inputs", "outputs",
+                              "permissions", "nfr", "acceptance_criteria")
+                if document_type == "prd":
+                    if isinstance(content.get('requirement_id'), str) and content['requirement_id'].strip():
+                        identifier = content['requirement_id'].strip().casefold()
+                        for prior in sections[:index]:
+                            for existing in prior.get('blocks', []):
+                                other = existing.get('content', {}).get('requirement_id')
+                                if existing.get('type') == 'requirement' and isinstance(other, str) and other.strip().casefold() == identifier:
+                                    raise InvalidAst("Duplicate PRD requirement ID")
+                        for existing in section.get('blocks', [])[:block_index]:
+                            other = existing.get('content', {}).get('requirement_id')
+                            if existing.get('type') == 'requirement' and isinstance(other, str) and other.strip().casefold() == identifier:
+                                raise InvalidAst("Duplicate PRD requirement ID")
+                    for field in prd_fields:
+                        if field in content:
+                            _text(content[field], 4096)
+                    if content.get("requirement_id") and not re.fullmatch(
+                            r"FR-[A-Za-z0-9][A-Za-z0-9._-]{0,126}", content["requirement_id"]) and content.get('requirement_id') != old_content.get('requirement_id'):
+                        raise InvalidAst("Invalid PRD requirement ID")
+                    _text(content.get("statement", ""), 2048)
+                    _text(content.get("verification_method", ""), 2048)
+                elif document_type == 'technical_requirements':
+                    for field in ('requirement_id', 'statement', 'condition', 'metric', 'unit',
+                                  'threshold', 'verification_method'):
+                        _text(content.get(field, ''), 2048)
+                    if old_content.get('source_refs') and any(
+                            content.get(field) != old_content.get(field)
+                            for field in ('condition', 'metric', 'unit', 'threshold')):
+                        raise InvalidAst('Source-backed threshold cannot be replaced without new provenance')
+                else:
+                    for field in ("requirement_id", "statement", "verification_method"):
+                        _text(content.get(field), 2048, empty=False)
                 for ref in _array(content.get("source_refs"), 128):
                     _id(ref)
+                if document_type in ("prd", "technical_requirements"):
+                    refs = content.get('source_refs', [])
+                    if len(set(refs)) != len(refs):
+                        raise InvalidAst("Duplicate PRD source reference")
+                    previous_refs = old_content.get('source_refs', [])
+                    if not controlled_citation and content.get('source_refs', []) != previous_refs:
+                        raise InvalidAst("PRD sources require a controlled command")
+            elif kind in ('test_item', 'test_case', 'acceptance'):
+                if document_type != 'test_plan':
+                    raise InvalidAst('Test blocks require a test plan')
+                for field in ('identifier', 'statement', 'condition', 'metric', 'unit',
+                              'threshold', 'verification_method'):
+                    _text(content.get(field, ''), 2048)
+                for ref in _array(content.get('links', []), 128):
+                    ref = _object(ref)
+                    if set(ref) != {'document_id', 'version_id', 'section_id', 'block_id'}:
+                        raise InvalidAst('A trace requires exact version and block locators')
+                    for value in ref.values():
+                        _id(value)
             elif kind == "table":
                 for row in _array(content.get("rows"), 256):
                     for cell in _array(row, 64):

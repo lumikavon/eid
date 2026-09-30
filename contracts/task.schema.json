@@ -2,6 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eid.local/contracts/task.schema.json",
   "$defs": {
+    "AttachmentJobSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {"format": "uuid", "title": "Id", "type": "string"},
+        "document_id": {"format": "uuid", "title": "Document Id", "type": "string"},
+        "state": {"enum": ["QUEUED", "RUNNING", "PARTIAL", "SUCCEEDED", "FAILED", "BLOCKED"], "title": "State", "type": "string"},
+        "error_code": {"anyOf": [{"pattern": "^[A-Z_]{1,64}$", "type": "string"}, {"type": "null"}], "title": "Error Code"},
+        "attempt": {"maximum": 3, "minimum": 0, "title": "Attempt", "type": "integer"},
+        "created_at": {"format": "date-time", "title": "Created At", "type": "string"},
+        "updated_at": {"format": "date-time", "title": "Updated At", "type": "string"}
+      },
+      "required": ["id", "document_id", "state", "error_code", "attempt", "created_at", "updated_at"],
+      "title": "AttachmentJobSnapshot",
+      "type": "object"
+    },
     "EventPage": {
       "additionalProperties": false,
       "properties": {
@@ -802,6 +817,7 @@
     }
   },
   "anyOf": [
+    {"$ref": "#/$defs/AttachmentJobSnapshot"},
     {
       "$ref": "#/$defs/SubmitTask"
     },

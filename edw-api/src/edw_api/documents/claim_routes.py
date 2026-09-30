@@ -62,6 +62,16 @@ class Cite(Strict):
     quoted_text: str = Field(min_length=1, max_length=4000)
 
 
+class CiteRequirement(Strict):
+    base_version_id: UUID
+    revision: int = Field(ge=1)
+    section_id: UUID
+    block_id: UUID
+    claim_id: UUID
+    link_id: UUID
+    quoted_text: str = Field(min_length=1, max_length=4000)
+
+
 def changed():
     raise ApiError(409, 'CITATION_RESELECT', '选区、版本或来源已变化；请重新选择正文')
 
@@ -358,6 +368,100 @@ def create_router(settings, verify):
                 continue
         return {'data': {'claim_id': claim_id, 'links': output,
                          'state': 'current' if output and len(output) == len(links) and not conflict_seen else 'needs_review'}}
+
+    @router.post('/requirements/citations')
+    def cite_requirement(workspace_id: UUID, document_id: UUID, command: CiteRequirement,
+                         request: Request, response: Response, current=Depends(actor)):
+        response.headers['Cache-Control'] = 'no-store'
+        with database() as conn:
+            head(conn, current.subject, workspace_id, document_id, command.base_version_id,
+                 command.revision, edit=True)
+            link = conn.execute('''SELECT l.*,c.document_version_id,c.section_id AS claim_section,
+                c.block_id AS claim_block,c.statement AS claim_statement,c.claim_type FROM claim_evidence_link l
+                JOIN document_claim c ON c.id=l.claim_id AND c.workspace_id=l.workspace_id
+                WHERE l.id=%s AND l.claim_id=%s AND l.workspace_id=%s AND c.document_id=%s''',
+                (command.link_id, command.claim_id, workspace_id, document_id)).fetchone()
+            if not link or link['relation'] != 'supports' or link['claim_type'] != 'prd_requirement' or link['document_version_id'] != command.base_version_id:
+                changed()
+        row, item, proof = source_proof(settings, current.subject, workspace_id, document_id,
+                                        link['pack_id'], link['item_ordinal'])
+        with database() as conn:
+            head(conn, current.subject, workspace_id, document_id, command.base_version_id,
+                 command.revision, edit=True)
+            text = live(conn, current.subject, workspace_id, document_id, row, item, proof)
+            conflicting = conn.execute('''SELECT 1 FROM claim_evidence_link WHERE claim_id=%s
+                AND workspace_id=%s AND relation='conflicts' LIMIT 1''',
+                (command.claim_id, workspace_id)).fetchone()
+            anchor, _, _ = scope(conn, current.subject, workspace_id, document_id, None)
+            governed = decorate(conn, anchor, [dict(item)], workspace_id)
+            if (conflicting or not governed or any(g.get('conflict_id') for g in governed[0].get('governance', []))
+                    or command.quoted_text != link['quoted_text'] or command.quoted_text not in text
+                    or link['claim_statement'] not in command.quoted_text
+                    or command.section_id != link['claim_section'] or command.block_id != link['claim_block']
+                    or command.section_id != row['section_id'] or item['chain'] != 'attachment'):
+                changed()
+            current_claim = conn.execute('''SELECT statement,claim_type FROM document_claim
+                WHERE id=%s AND workspace_id=%s AND document_id=%s AND document_version_id=%s''',
+                (command.claim_id, workspace_id, document_id, command.base_version_id)).fetchone()
+            if not current_claim or current_claim['claim_type'] != 'prd_requirement' or current_claim['statement'] != link['claim_statement']:
+                changed()
+            facts, _ = editable_document(conn, current.subject, workspace_id, document_id)
+            previous = _document_row(conn, facts, workspace_id, document_id)
+            ast = previous['ast']
+            if ast['document']['metadata']['document_type'] not in ('prd', 'technical_requirements'):
+                changed()
+            section = next((s for s in ast['document']['sections'] if s['id'] == str(command.section_id)), None)
+            block = next((b for b in section['blocks'] if b['id'] == str(command.block_id)), None) if section else None
+            if (not block or block['type'] != 'requirement' or
+                    block['content'].get('statement') != link['claim_statement'] or
+                    not block['content']['statement']):
+                changed()
+            references = block['content'].get('source_refs', [])
+            if not isinstance(references, list):
+                changed()
+            from ..review.routes import citation_rows, source_safe
+            retained = citation_rows(conn, workspace_id, document_id, command.base_version_id)
+            # Reattest every carried binding under the current transaction and policy.
+            source_safe(conn, workspace_id, anchor, current.subject, retained)
+            retained_ids = {str(c['id']) for c in retained}
+            if not set(references) <= retained_ids:
+                changed()
+            carried_ids = {str(c['id']): str(uuid4()) for c in retained}
+            for existing_section in ast['document']['sections']:
+                for existing_block in existing_section['blocks']:
+                    if existing_block['type'] == 'requirement':
+                        if not set(existing_block['content'].get('source_refs', [])) <= retained_ids:
+                            changed()
+                        existing_block['content']['source_refs'] = [carried_ids.get(ref, ref)
+                            for ref in existing_block['content'].get('source_refs', [])]
+            for existing_citation in ast['document']['citations']:
+                if existing_citation['id'] in carried_ids:
+                    existing_citation['id'] = carried_ids[existing_citation['id']]
+                    existing_citation['needs_review'] = False
+            citation_id = uuid4()
+            block['content']['source_refs'] = [*(carried_ids[ref] for ref in references), str(citation_id)]
+            ast['document']['citations'].append({'id': str(citation_id), 'claim_id': str(command.claim_id),
+                'link_id': str(command.link_id), 'section_id': str(command.section_id),
+                'block_id': str(command.block_id), 'start_offset': 0,
+                'end_offset': len(link['claim_statement']), 'marker': '', 'needs_review': False})
+            saved = save_document(conn, current.subject, workspace_id, document_id,
+                SimpleNamespace(base_version_id=command.base_version_id, revision=command.revision,
+                                ast=DomainAst.model_validate(ast)),
+                request.state.request_id, request.state.trace_id, controlled_citation=True)
+            for old_id, new_id in carried_ids.items():
+                conn.execute('''INSERT INTO document_citation(id,workspace_id,document_id,document_version_id,
+                claim_id,link_id,section_id,block_id,start_offset,end_offset,selected_text,quoted_text,needs_review)
+                SELECT %s,workspace_id,document_id,%s,claim_id,link_id,section_id,block_id,
+                start_offset,end_offset,selected_text,quoted_text,false FROM document_citation
+                WHERE workspace_id=%s AND document_id=%s AND document_version_id=%s AND id=%s''',
+                (new_id, saved['version_id'], workspace_id, document_id, command.base_version_id, old_id))
+            conn.execute('''INSERT INTO document_citation(id,workspace_id,document_id,document_version_id,
+                claim_id,link_id,section_id,block_id,start_offset,end_offset,selected_text,quoted_text,needs_review)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,false)''',
+                (citation_id, workspace_id, document_id, saved['version_id'], command.claim_id,
+                 command.link_id, command.section_id, command.block_id,
+                 len(link['claim_statement']), link['claim_statement'], command.quoted_text))
+            return {'data': saved}
 
     @router.post('/citations')
     def cite(workspace_id: UUID, document_id: UUID, command: Cite, request: Request, response: Response, current=Depends(actor)):
